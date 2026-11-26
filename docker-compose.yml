@@ -29,6 +29,9 @@ services:
       # --- Options ------------------------------------------------------------
       DEFAULT_LANGUAGE: "en"          # en, fr
       ENABLE_GROUP_PICKER: "false"    # true needs GroupMember.Read.All (README)
+      # Device inventory: the software found on the devices.
+      # true needs DeviceManagementManagedDevices.Read.All (README).
+      ENABLE_DEVICE_INVENTORY: "false"
       # ALLOWED_USERS: "first@example.com,second@example.com"
       # MAX_DOWNLOAD_MB: "8192"
       # SESSION_HOURS: "12"

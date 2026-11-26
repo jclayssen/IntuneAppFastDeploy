@@ -24,6 +24,7 @@ class Settings:
     work_dir: Path = Path("/tmp/iafd")  # noqa: S108 - private to the container
     max_download_mb: int = 8192
     enable_group_picker: bool = False
+    enable_device_inventory: bool = False
     default_language: str = "en"
     allowed_users: list[str] = field(default_factory=list)
     session_hours: int = 12
@@ -43,6 +44,7 @@ class Settings:
             work_dir=Path(env("WORK_DIR", "/tmp/iafd")),  # noqa: S108
             max_download_mb=int(env("MAX_DOWNLOAD_MB", "8192")),
             enable_group_picker=_flag("ENABLE_GROUP_PICKER"),
+            enable_device_inventory=_flag("ENABLE_DEVICE_INVENTORY"),
             default_language=env("DEFAULT_LANGUAGE", "en").strip().lower() or "en",
             allowed_users=[
                 user.strip().lower() for user in env("ALLOWED_USERS", "").split(",") if user.strip()
@@ -66,4 +68,6 @@ class Settings:
         scopes = [f"{resource}/DeviceManagementApps.ReadWrite.All"]
         if self.enable_group_picker:
             scopes.append(f"{resource}/GroupMember.Read.All")
+        if self.enable_device_inventory:
+            scopes.append(f"{resource}/DeviceManagementManagedDevices.Read.All")
         return scopes

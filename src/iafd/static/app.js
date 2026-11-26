@@ -3,6 +3,7 @@
 
 const main = document.getElementById("main");
 let config = {};
+let section = "apps";
 let strings = {};
 let fallback = {};
 
@@ -119,11 +120,11 @@ function button(label, onclick, cls = "") {
 }
 
 async function busy(node, action) {
-  node.disabled = true;
+  if (node) node.disabled = true;
   try {
     return await action();
   } finally {
-    node.disabled = false;
+    if (node) node.disabled = false;
   }
 }
 
@@ -164,6 +165,7 @@ function preferredLanguage() {
 // ---------------------------------------------------------------- sign-in
 
 function showLogin(reason) {
+  document.getElementById("nav").replaceChildren();
   document.getElementById("logout").hidden = true;
   document.getElementById("user").textContent = "";
   if (!config.configured) {
@@ -192,7 +194,21 @@ function showLogin(reason) {
 
 // ---------------------------------------------------------------- app list
 
+// The two sections of the tool. Only shown when the device inventory is enabled.
+function drawNav(current) {
+  if (current) section = current;
+  const nav = document.getElementById("nav");
+  if (!config.device_inventory) {
+    nav.replaceChildren();
+    return;
+  }
+  const tab = (key, label, open) =>
+    h("button", { type: "button", class: `tab ${section === key ? "current" : ""}`, "aria-current": section === key ? "page" : null, onclick: open }, label);
+  nav.replaceChildren(tab("apps", t("nav.apps"), showApps), tab("inventory", t("nav.inventory"), () => showInventory("software")));
+}
+
 async function showApps() {
+  drawNav("apps");
   const list = h("div", { class: "panel" }, h("p", { class: "muted" }, t("apps.loading")));
   const search = h("input", { type: "search", placeholder: t("apps.search"), class: "grow" });
   show(
@@ -702,6 +718,192 @@ function showDone(job) {
   );
 }
 
+// ---------------------------------------------------------------- device inventory
+
+function when(value) {
+  if (!value) return "—";
+  const date = typeof value === "number" ? new Date(value * 1000) : new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString(document.documentElement.lang, { dateStyle: "short", timeStyle: "short" });
+}
+
+function table(headers, rows) {
+  return h(
+    "div",
+    { class: "table-wrap" },
+    h("table", {}, h("thead", {}, h("tr", {}, headers.map((label) => h("th", {}, label)))), h("tbody", {}, rows)),
+  );
+}
+
+function pager(result, go) {
+  if (result.pages <= 1) return null;
+  return h(
+    "div",
+    { class: "row end pager" },
+    button(t("inventory.previous"), () => go(result.page - 1), "ghost small"),
+    h("span", { class: "muted" }, t("inventory.page", { page: result.page, pages: result.pages })),
+    button(t("inventory.next"), () => go(result.page + 1), "ghost small"),
+  );
+}
+
+function deviceRows(devices) {
+  return devices.map((device) =>
+    h(
+      "tr",
+      {},
+      h("td", {}, button(device.name || device.id, () => showDevice(device.id), "linkish")),
+      h("td", {}, device.user || "—"),
+      h("td", {}, device.model || "—"),
+      h("td", {}, device.os_version || "—"),
+      h("td", {}, when(device.last_sync)),
+    ),
+  );
+}
+
+function deviceHeaders() {
+  return [t("inventory.device"), t("inventory.user"), t("inventory.model"), t("inventory.os"), t("inventory.last_sync")];
+}
+
+// Software found on the devices (tab "software") or the devices themselves (tab "devices").
+function showInventory(tab = "software", query = "") {
+  drawNav("inventory");
+  const bySoftware = tab === "software";
+  const search = h("input", { type: "search", class: "grow", value: query, placeholder: t(bySoftware ? "inventory.search_software" : "inventory.search_device") });
+  const body = h("div", { class: "panel" }, h("p", { class: "muted" }, t("apps.loading")));
+  const note = h("p", { class: "hint" });
+  const switcher = (key, label) =>
+    h("button", { type: "button", class: `tab ${tab === key ? "current" : ""}`, "aria-current": tab === key ? "page" : null, onclick: () => showInventory(key) }, label);
+  let request = 0;
+
+  const load = async (page = 1, refresh = false) => {
+    const mine = ++request;
+    const params = new URLSearchParams({ q: search.value, page });
+    if (refresh) params.set("refresh", "true");
+    let result;
+    try {
+      result = await api("GET", `/api/inventory/${bySoftware ? "apps" : "devices"}?${params}`);
+    } catch (error) {
+      if (mine === request) body.replaceChildren(errorBox(error));
+      return;
+    }
+    if (mine !== request) return; // a newer search answered first
+    note.textContent = t("inventory.note", { time: when(result.fetched_at) });
+    if (!result.total) {
+      body.replaceChildren(h("p", { class: "empty muted" }, t(search.value ? "apps.no_match" : bySoftware ? "inventory.no_software" : "inventory.no_device")));
+      return;
+    }
+    const rows = bySoftware
+      ? result.items.map((item) =>
+          h(
+            "tr",
+            {},
+            h("td", {}, button(item.name, () => showSoftware(item, search.value), "linkish")),
+            h("td", {}, item.publisher || "—"),
+            h("td", {}, item.versions.length === 1 ? item.versions[0].version || "—" : t("inventory.several", { count: item.versions.length })),
+            h("td", {}, String(item.installs)),
+          ),
+        )
+      : deviceRows(result.items);
+    const headers = bySoftware ? [t("apps.name"), t("apps.publisher"), t("apps.version"), t("inventory.installs")] : deviceHeaders();
+    body.replaceChildren(table(headers, rows), pager(result, (next) => load(next)) || "");
+  };
+
+  let timer;
+  search.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => load(1), 250);
+  });
+  show(
+    h("div", { class: "head" }, h("h1", {}, t("inventory.title")), h("div", { class: "tabs" }, switcher("software", t("inventory.by_software")), switcher("devices", t("inventory.by_device")))),
+    h("div", { class: "row" }, search, button(t("inventory.refresh"), (event) => busy(event.target, () => load(1, true)), "ghost")),
+    note,
+    body,
+  );
+  return load(1);
+}
+
+// One piece of software: its versions, and on request the devices that have each version.
+function showSoftware(item, query) {
+  drawNav("inventory");
+  const devices = h("div", {});
+  const open = async (entry, control) => {
+    devices.replaceChildren(h("div", { class: "panel" }, h("p", { class: "muted" }, t("apps.loading"))));
+    try {
+      const result = await busy(control, () => api("GET", `/api/inventory/apps/${encodeURIComponent(entry.id)}/devices`));
+      devices.replaceChildren(
+        h(
+          "div",
+          { class: "panel" },
+          h("h2", {}, t("inventory.devices_with", { version: entry.version || "—" })),
+          result.devices.length ? table(deviceHeaders(), deviceRows(result.devices)) : h("p", { class: "muted" }, t("inventory.no_device")),
+        ),
+      );
+    } catch (error) {
+      devices.replaceChildren(errorBox(error));
+    }
+  };
+  show(
+    h("div", { class: "head" }, h("h1", {}, item.name), button(t("action.back"), () => showInventory("software", query), "ghost")),
+    h(
+      "div",
+      { class: "panel" },
+      h("dl", { class: "facts" }, h("dt", {}, t("apps.publisher")), h("dd", {}, item.publisher || "—"), h("dt", {}, t("inventory.installs")), h("dd", {}, String(item.installs))),
+    ),
+    h(
+      "div",
+      { class: "panel" },
+      h("h2", {}, t("inventory.versions")),
+      table(
+        [t("apps.version"), t("inventory.devices"), ""],
+        item.versions.map((entry) =>
+          h("tr", {}, h("td", {}, entry.version || "—"), h("td", {}, String(entry.devices)), h("td", { class: "actions" }, button(t("inventory.show_devices"), (event) => open(entry, event.target), "small"))),
+        ),
+      ),
+    ),
+    devices,
+  );
+  if (item.versions.length === 1) open(item.versions[0], null);
+}
+
+// One device and everything Intune found on it.
+async function showDevice(deviceId) {
+  drawNav("inventory");
+  show(h("p", { class: "muted" }, t("apps.loading")));
+  let detail;
+  try {
+    detail = await api("GET", `/api/inventory/devices/${encodeURIComponent(deviceId)}`);
+  } catch (error) {
+    show(errorBox(error), button(t("action.back"), () => showInventory("devices"), "ghost"));
+    return;
+  }
+  const { device, apps } = detail;
+  show(
+    h("div", { class: "head" }, h("h1", {}, device.name), button(t("action.back"), () => showInventory("devices"), "ghost")),
+    h(
+      "div",
+      { class: "panel" },
+      h(
+        "dl",
+        { class: "facts" },
+        h("dt", {}, t("inventory.user")), h("dd", {}, device.user || "—"),
+        h("dt", {}, t("inventory.model")), h("dd", {}, device.model || "—"),
+        h("dt", {}, t("inventory.os")), h("dd", {}, device.os_version || "—"),
+        h("dt", {}, t("inventory.last_sync")), h("dd", {}, when(device.last_sync)),
+      ),
+    ),
+    h(
+      "div",
+      { class: "panel" },
+      h("h2", {}, t("inventory.software_on", { count: apps.length })),
+      apps.length
+        ? table(
+            [t("apps.name"), t("apps.version"), t("apps.publisher")],
+            apps.map((app) => h("tr", {}, h("td", {}, button(app.name, () => showInventory("software", app.name), "linkish")), h("td", {}, app.version || "—"), h("td", {}, app.publisher || "—"))),
+          )
+        : h("p", { class: "muted" }, t("inventory.no_software")),
+    ),
+  );
+}
+
 // ---------------------------------------------------------------- start
 
 async function start() {
@@ -745,7 +947,8 @@ async function boot() {
   }
   document.getElementById("user").textContent = me.name;
   document.getElementById("logout").hidden = false;
-  showApps();
+  if (section === "inventory" && config.device_inventory) showInventory("software");
+  else showApps();
 }
 
 start();

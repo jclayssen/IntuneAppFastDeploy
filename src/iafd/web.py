@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFil
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, appmodel, intunewin, publish
+from . import __version__, appmodel, intunewin, inventory, publish
 from .analyze import analyze
 from .appmodel import FormError
 from .auth import COOKIE, Auth, AuthError, Session
@@ -121,6 +122,7 @@ def create_app(
             "languages": available_languages(),
             "default_language": settings.default_language,
             "group_picker": settings.enable_group_picker,
+            "device_inventory": settings.enable_device_inventory,
             "max_download_mb": settings.max_download_mb,
             "redirect_uri": auth.redirect_uri,
             "config_writable": store.writable(),
@@ -264,6 +266,84 @@ def create_app(
             return {"groups": graph.search_groups(q[:100])}
         finally:
             graph.close()
+
+    # ------------------------------------------------------------------ inventory
+
+    INVENTORY_TTL = 300
+
+    def inventory_session(request: Request) -> Session:
+        session = current(request)
+        if not settings.enable_device_inventory:
+            raise HTTPException(404, {"code": "error.inventory_disabled", "detail": ""})
+        return session
+
+    def cached(session: Session, key: str, refresh: bool, load: Callable[[Graph], list]) -> dict:
+        """Intune inventory is slow to read and changes once a day: keep it a few minutes."""
+        entry = session.data.get(key)
+        if refresh or entry is None or time.time() - entry["at"] > INVENTORY_TTL:
+            graph = make_graph(session)
+            try:
+                entry = {"at": time.time(), "items": load(graph)}
+            finally:
+                graph.close()
+            session.data[key] = entry
+        return entry
+
+    def identifier(value: str) -> str:
+        try:
+            return inventory.safe_id(value)
+        except ValueError as exc:
+            raise HTTPException(400, {"code": str(exc), "detail": ""}) from exc
+
+    @app.get("/api/inventory/apps")
+    def inventory_apps(request: Request, q: str = "", page: int = 1, refresh: bool = False) -> dict:
+        session = inventory_session(request)
+        entry = cached(
+            session, "detected", refresh, lambda g: inventory.group_apps(g.detected_apps())
+        )
+        found = inventory.search(entry["items"], q[:100], ("name", "publisher"))
+        return {**inventory.paginate(found, page), "fetched_at": entry["at"]}
+
+    @app.get("/api/inventory/apps/{detected_id}/devices")
+    def inventory_app_devices(request: Request, detected_id: str) -> dict:
+        session = inventory_session(request)
+        graph = make_graph(session)
+        try:
+            devices = graph.detected_app_devices(identifier(detected_id))
+        finally:
+            graph.close()
+        rows = [inventory.summarize_device(device) for device in devices]
+        return {"devices": sorted(rows, key=lambda row: row["name"].casefold())}
+
+    @app.get("/api/inventory/devices")
+    def inventory_devices(
+        request: Request, q: str = "", page: int = 1, refresh: bool = False
+    ) -> dict:
+        session = inventory_session(request)
+        entry = cached(
+            session,
+            "devices",
+            refresh,
+            lambda g: sorted(
+                (inventory.summarize_device(device) for device in g.managed_devices()),
+                key=lambda row: row["name"].casefold(),
+            ),
+        )
+        found = inventory.search(entry["items"], q[:100], ("name", "user", "model"))
+        return {**inventory.paginate(found, page), "fetched_at": entry["at"]}
+
+    @app.get("/api/inventory/devices/{device_id}")
+    def inventory_device(request: Request, device_id: str) -> dict:
+        session = inventory_session(request)
+        graph = make_graph(session)
+        try:
+            device = graph.device_with_apps(identifier(device_id))
+        finally:
+            graph.close()
+        return {
+            "device": inventory.summarize_device(device),
+            "apps": inventory.device_apps(device.get("detectedApps") or []),
+        }
 
     # ------------------------------------------------------------------ jobs
 

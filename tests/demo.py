@@ -22,9 +22,12 @@ from .fake_intune import BASE, FakeIntune
 
 class DemoAuth:
     redirect_uri = "http://localhost:8080/auth/callback"
-    _session = Session(
-        "demo", "demo-user", "Demo Admin", "admin@example.test", "", time.time() + 1e9
-    )
+
+    def __init__(self) -> None:
+        # One session per server: nothing cached leaks from one test to the next.
+        self._session = Session(
+            "demo", "demo-user", "Demo Admin", "admin@example.test", "", time.time() + 1e9
+        )
 
     def session(self, _):
         return self._session
@@ -127,9 +130,36 @@ def seed(intune: FakeIntune) -> None:
             ]
 
 
+def seed_devices(intune: FakeIntune) -> None:
+    zip23 = ("7-Zip 23.01 (x64 edition)", "23.01.00.0", "Igor Pavlov")
+    zip19 = ("7-Zip 19.00 (x64 edition)", "19.00.00.0", "Igor Pavlov")
+    vlc = ("VLC media player", "3.0.20", "VideoLAN")
+    npp86 = ("Notepad++ (64-bit x64)", "8.6", "Notepad++ Team")
+    npp79 = ("Notepad++ (64-bit x64)", "7.9.5", "Notepad++ Team")
+    chrome = ("Google Chrome", "131.0.6778.86", "Google LLC")
+    java = ("Java 8 Update 201 (64-bit)", "8.0.2010.9", "Oracle Corporation")
+    winrar = ("WinRAR 5.91 (64-bit)", "5.91.0", "win.rar GmbH")
+    teamviewer = ("TeamViewer", "15.20.6", "TeamViewer")
+    zoom = ("Zoom Workplace", "6.2.11", "Zoom Video Communications, Inc.")
+    weather = ("Microsoft.BingWeather", "4.53.52892.0", "Microsoft Corporation")
+    fleet = [
+        ("PC-ACCUEIL-01", "accueil@example.test", [zip23, vlc, chrome, weather]),
+        ("PC-COMPTA-02", "compta@example.test", [zip23, chrome, java, winrar]),
+        ("PC-COMPTA-03", "paie@example.test", [zip19, chrome, java]),
+        ("PC-DIRECTION-01", "direction@example.test", [zip23, chrome, zoom, teamviewer]),
+        ("PC-ATELIER-04", "atelier@example.test", [zip19, npp79, vlc, winrar]),
+        ("PC-IT-01", "admin@example.test", [zip23, npp86, chrome, teamviewer, zoom]),
+        ("PC-IT-02", "support@example.test", [zip23, npp86, chrome, vlc]),
+        ("LAPTOP-RH-07", "rh@example.test", [zip23, chrome, zoom, weather]),
+    ]
+    for name, user, software in fleet:
+        intune.add_device(name, user, software)
+
+
 def build():
     intune = FakeIntune()
     seed(intune)
+    seed_devices(intune)
     root = Path(tempfile.mkdtemp(prefix="iafd-demo-"))
     settings = Settings(
         tenant_id="demo",
@@ -137,6 +167,7 @@ def build():
         config_dir=root / "config",
         work_dir=root / "work",
         default_language="fr",
+        enable_device_inventory=True,
     )
     return create_app(
         settings,
