@@ -301,5 +301,19 @@
   "error.removal_protected": "Protected software, the tool refuses to remove it:",
   "error.removal_confirm": "The name typed does not match the first software",
   "error.removal_not_found": "This removal rule no longer exists",
-  "removal.command_short": "Uninstall command"
+  "removal.command_short": "Uninstall command",
+  "error.replace_bad_mode": "Unknown replacement method",
+  "error.replace_bad_install": "The install command is not valid for a replacement: it must be on one line",
+  "replace.start": "Replace with a newer version",
+  "replace.title": "Devices that already have an older version",
+  "replace.enable": "Install only on the devices where an older version is found",
+  "replace.hint": "Intune then offers this application only to the devices that have one of these programs, in a version older than the one below. The names must be exactly those of the inventory.",
+  "replace.no_name": "No program chosen",
+  "replace.below": "Older than version",
+  "replace.mode": "How the old version is replaced",
+  "replace.upgrade": "The installer upgrades over it (usual case)",
+  "replace.reinstall": "Remove the old version first, then install",
+  "replace.upgrade_hint": "Nothing else changes: the new installer does the upgrade.",
+  "replace.reinstall_hint": "For programs that do not upgrade over an existing version. The old version is removed silently; if that fails, the new one is not installed.",
+  "replace.command_hint": "Only needed when the old version is neither an MSI nor a program that declares a silent uninstall. {UninstallString} stands for its uninstaller."
 }

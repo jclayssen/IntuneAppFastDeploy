@@ -302,6 +302,7 @@ class FakeIntune:
                 "fileDigest",
                 "fileDigestAlgorithm",
             }
+            self.encryption = body["fileEncryptionInfo"]
             self.files[app_id]["uploadState"] = (
                 "commitFileFailed" if self.fail_commit else "commitFileSuccess"
             )

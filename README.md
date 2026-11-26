@@ -19,6 +19,7 @@ You paste the link of the new installer, the tool downloads it, reads what it ca
 - [Pilot and production groups](#pilot-and-production-groups)
 - [Device inventory](#device-inventory)
 - [Removing software from the devices](#removing-software-from-the-devices)
+- [Replacing an older version](#replacing-an-older-version)
 - [Running on a server with HTTPS](#running-on-a-server-with-https)
 - [Who can sign in](#who-can-sign-in)
 - [Keeping the tool up to date](#keeping-the-tool-up-to-date)
@@ -98,6 +99,7 @@ These screens come from the built-in demo, which runs against a simulated Intune
 - **Works with any tenant**: nothing about a tenant is stored in this repository or in the image. Each organization uses its own app registration.
 - **Device inventory** (optional, read-only): the software found on your Windows devices, by software or by device, including what was not installed through Intune.
 - **Software removal** (optional): remove a program from the devices through Intune, including one Intune did not install, with the result on each device.
+- **Replacing older versions** (optional): publish a new version only for the devices that have an older one, removing the old one first when its installer cannot upgrade over it.
 - **English and French interface**, one file per language.
 
 ## What you need
@@ -318,6 +320,26 @@ On the page of an Intune application, **Remove from devices** assigns that appli
 - Removal rules are stored in `config/removals.json`. Nothing is written in the Notes of your applications.
 - The script was tested on Windows with real installers, but not yet through a real Intune tenant: make your first removal on unimportant software and one or two devices.
 
+## Replacing an older version
+
+When a program is already on some devices — whether or not Intune installed it — you can publish a newer version for those devices only. It needs the [device inventory](#device-inventory) option.
+
+1. In **Device inventory**, open the program and click **Replace with a newer version**. (You can also tick the same option on the review screen of any publication.)
+2. Give the link of the new installer, as for any application.
+3. On the review screen, the block **Devices that already have an older version** is ticked, with the name from the inventory. Check:
+   - the **names**: exactly those of the inventory; add the other names of the same program if it has several;
+   - **Older than version**: by default the version you are publishing;
+   - **how the old version is replaced**:
+
+     | Choice | What happens on the device |
+     |---|---|
+     | The installer upgrades over it | The usual case. Nothing is added to the package. |
+     | Remove the old version first, then install | For programs that do not upgrade over an existing version. The package also carries the removal script: the old version is removed silently, then the installer runs. **If the old version cannot be removed, the new one is not installed.** |
+
+Either way, Intune only offers the application to the devices where an older version is found: you can assign it to *All devices* without installing it everywhere.
+
+With "remove first", the same rules as for a removal apply: MSI and programs declaring a silent uninstall are removed automatically, others need the vendor's command, and protected software is refused.
+
 ## Running on a server with HTTPS
 
 Away from `localhost`, Microsoft sign-in requires HTTPS. The `https` profile starts a small web server (Caddy) in front of the tool.
@@ -448,7 +470,7 @@ docker compose logs -f app
 
 - Windows Win32 applications only (not Microsoft Store, macOS or mobile apps).
 - Software removal depends on each program having a silent uninstall; see [Removing software from the devices](#removing-software-from-the-devices).
-- One setup file per application. An installer that needs several files next to it must be wrapped into a single EXE or MSI first.
+- One setup file per application (the tool adds its own scripts next to it when you choose to remove an older version first). An installer that needs several files next to it must be wrapped into a single EXE or MSI first.
 - The uninstall command and the detection rule of an EXE cannot be guessed from the file: you enter them once, then they are copied at each update.
 - Detection rules based on a script are copied as they are.
 - The oldest version is deleted from Intune when a third one is published (unless you untick the box).

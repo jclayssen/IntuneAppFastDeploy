@@ -223,6 +223,85 @@ def app_body(config: dict) -> dict:
     return body
 
 
+# --------------------------------------------------------------------------- older versions
+
+REPLACE_TEMPLATE = Path(__file__).parent / "scripts" / "Replace-Software.ps1"
+REQUIREMENT_NAME = "IntuneAppFastDeploy: an older version is installed"
+REPLACE_MODES = ("upgrade", "reinstall")
+
+
+def clean_replace(raw: dict | None, new_version: str) -> dict | None:
+    """Settings of "replace an older version", or ``None`` when it is not used.
+
+    ``upgrade``: the new installer upgrades over the old version; the app is only
+    offered to devices that have an older version. ``reinstall``: the old version
+    is removed first, by the removal script shipped in the package.
+    """
+    if not raw or not raw.get("enabled"):
+        return None
+    mode = raw.get("mode", "upgrade")
+    if mode not in REPLACE_MODES:
+        raise RemovalError("error.replace_bad_mode")
+    below = str(raw.get("below") or new_version or "").strip()
+    config = clean_config(
+        {
+            "names": raw.get("names"),
+            "kind": "machine",
+            "versions": {"mode": "below", "value": below},
+            "command": raw.get("command") if mode == "reinstall" else "",
+        }
+    )
+    return {"mode": mode, "config": config}
+
+
+def requirement_rule(config: dict) -> dict:
+    """Intune only installs the app where the script answers "present"."""
+    return {
+        "@odata.type": SCRIPT_RULE,
+        "ruleType": "requirement",
+        "displayName": REQUIREMENT_NAME,
+        "enforceSignatureCheck": False,
+        "runAs32Bit": False,
+        "runAsAccount": "system",
+        "scriptContent": encode_script(render_script(config, "Requirement")),
+        "operationType": "string",
+        "operator": "equal",
+        "comparisonValue": "present",
+    }
+
+
+def is_tool_requirement(rule: dict) -> bool:
+    return rule.get("ruleType") == "requirement" and rule.get("displayName") == REQUIREMENT_NAME
+
+
+def replace_script_name(config: dict) -> str:
+    return f"Replace-{clean_config(config)['slug']}.ps1"
+
+
+def render_replace_script(config: dict, install_command: str) -> str:
+    """The wrapper used as install command: remove the old version, then install."""
+    install_command = install_command.strip()
+    if not install_command or "\n" in install_command or "\r" in install_command:
+        raise RemovalError("error.replace_bad_install")
+    payload = json.dumps(
+        {"remove_script": script_file_name(config), "install_command": install_command},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    template = REPLACE_TEMPLATE.read_text(encoding="utf-8")
+    if template.count("'@@CONFIG@@'") != 1:
+        raise RuntimeError("the replacement script template is damaged")
+    encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+    return template.replace("'@@CONFIG@@'", f"'{encoded}'")
+
+
+def replace_install_command(config: dict) -> str:
+    return (
+        "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass "
+        f'-File "{replace_script_name(config)}"'
+    )
+
+
 STATES = {
     "notInstalled": "removed",
     "installed": "pending",
@@ -255,12 +334,27 @@ def status_rows(statuses: list[dict]) -> dict:
 
 
 def main(argv: list[str]) -> int:
-    """``python -m iafd.removal <mode> <config.json> <out.ps1>`` - used by the Windows tests."""
+    """``python -m iafd.removal <mode> <config.json> <out>`` - used by the Windows tests."""
     if len(argv) != 3:
         print("usage: python -m iafd.removal <mode> <config.json> <out.ps1>", file=sys.stderr)
         return 2
     mode, config_path, out_path = argv
     config = json.loads(Path(config_path).read_text(encoding="utf-8-sig"))
+    if mode == "Package":
+        # {"removal": <removal settings>, "install_command": "..."} -> both scripts of a
+        # "remove the older version, then install" package, written into a folder.
+        removal_config = clean_config(config["removal"])
+        folder = Path(out_path)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / script_file_name(removal_config)).write_text(
+            render_script(removal_config, "Uninstall"), encoding="utf-8-sig"
+        )
+        wrapper = folder / replace_script_name(removal_config)
+        wrapper.write_text(
+            render_replace_script(removal_config, config["install_command"]), encoding="utf-8-sig"
+        )
+        print(wrapper.name)
+        return 0
     # Windows PowerShell 5.1 reads a script without a byte order mark as ANSI:
     # write one so names with accents survive.
     Path(out_path).write_text(render_script(config, mode), encoding="utf-8-sig")

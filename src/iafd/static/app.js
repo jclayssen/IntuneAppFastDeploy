@@ -620,9 +620,74 @@ function detectionEditor(detection, analysis, isUpdate) {
   return { node: h("div", {}, field(t("detection.type"), type), body), value: () => ({ ...state }) };
 }
 
+// Set by "Replace with a newer version" in the inventory, read once by the review screen.
+let pendingReplace = null;
+
+// Optional block of the review screen: only install where an older version is found,
+// and if needed remove that older version first.
+function replaceEditor(seed, version) {
+  const state = { names: [...(seed?.names || [])] };
+  const enabled = h("input", { type: "checkbox", checked: !!seed });
+  const chips = h("div", { class: "chips" });
+  const found = h("div", { class: "results" });
+  const search = h("input", { type: "search", placeholder: t("removal.add_name") });
+  const below = input(version || "", { placeholder: "24.0" });
+  const mode = select([["upgrade", t("replace.upgrade")], ["reinstall", t("replace.reinstall")]], "upgrade");
+  const modeHint = h("p", { class: "hint" });
+  const command = input("", { class: "mono", placeholder: "{UninstallString} /S" });
+  const commandBlock = h("div", {}, field(t("removal.command"), command, t("replace.command_hint")));
+  const body = h("div", {});
+  const drawNames = () => {
+    chips.replaceChildren(
+      ...(state.names.length
+        ? state.names.map((name, index) => h("span", { class: "chip" }, name, h("button", { type: "button", "aria-label": t("action.remove"), onclick: () => { state.names.splice(index, 1); drawNames(); } }, "×")))
+        : [h("span", { class: "muted" }, t("replace.no_name"))]),
+    );
+  };
+  const draw = () => {
+    body.hidden = !enabled.checked;
+    modeHint.textContent = t(`replace.${mode.value}_hint`);
+    commandBlock.hidden = mode.value !== "reinstall";
+  };
+  let timer;
+  search.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      if (!search.value.trim()) {
+        found.replaceChildren();
+        return;
+      }
+      try {
+        const result = await api("GET", `/api/inventory/apps?q=${encodeURIComponent(search.value)}`);
+        const items = result.items.filter((item) => !state.names.some((name) => name.toLowerCase() === item.name.toLowerCase())).slice(0, 8);
+        const add = (item) => {
+          state.names.push(item.name);
+          search.value = "";
+          found.replaceChildren();
+          drawNames();
+        };
+        found.replaceChildren(...(items.length ? items.map((item) => button(item.name, () => add(item), "linkish")) : [h("span", { class: "muted" }, t("apps.no_match"))]));
+      } catch (error) {
+        found.replaceChildren(errorBox(error));
+      }
+    }, 300);
+  });
+  enabled.addEventListener("change", draw);
+  mode.addEventListener("change", draw);
+  body.append(h("p", { class: "muted" }, t("replace.hint")), chips, search, found, ...field(t("replace.below"), below).filter(Boolean), ...field(t("replace.mode"), mode).filter(Boolean), modeHint, commandBlock);
+  drawNames();
+  draw();
+  return {
+    node: h("div", { class: "panel" }, h("h2", {}, t("replace.title")), h("label", { class: "check" }, enabled, h("span", {}, t("replace.enable"))), body),
+    value: () => ({ enabled: enabled.checked, names: state.names, below: below.value.trim(), mode: mode.value, command: command.value }),
+  };
+}
+
 function showReview(job, appId) {
   const { analysis, form, existing, older, rollout } = job.result;
   const isUpdate = !!existing;
+  const replace = config.device_inventory ? replaceEditor(pendingReplace, form.version) : null;
+  pendingReplace = null;
   const controls = {
     display_name: input(form.display_name),
     version: input(form.version),
@@ -684,6 +749,7 @@ function showReview(job, appId) {
     message.replaceChildren();
     const body = { ...extra(), detection: detection.value() };
     for (const [key, control] of Object.entries(controls)) body[key] = control.value;
+    if (replace) body.replace = replace.value();
     if (body.rollout === "pilot" && !isUpdate && !body.pilot.targets.length) {
       message.replaceChildren(h("div", { class: "notice error" }, t("error.no_pilot_groups")));
       return;
@@ -736,6 +802,7 @@ function showReview(job, appId) {
     ),
     h("div", { class: "panel" }, h("h2", {}, t("detection.title")), h("p", { class: "muted" }, t("detection.text")), detection.node),
     options,
+    replace ? replace.node : null,
     message,
     h(
       "div",
@@ -889,6 +956,10 @@ function showSoftware(item, query) {
       { class: "head" },
       h("h1", {}, item.name),
       button(t("action.back"), () => showInventory("software", query), "ghost"),
+      button(t("replace.start"), () => {
+        pendingReplace = { names: [item.name] };
+        showWizard(null);
+      }, "ghost"),
       item.protected ? null : button(t("removal.start"), () => showRemovalForm({ names: [item.name], known: item.versions.map((entry) => entry.version) }), "danger"),
     ),
     item.protected ? h("div", { class: "notice" }, t("removal.protected_notice")) : null,

@@ -19,6 +19,7 @@ Vous collez le lien du nouvel installeur, l'outil le télécharge, lit ce qu'il 
 - [Groupes pilote et production](#groupes-pilote-et-production)
 - [Inventaire des postes](#inventaire-des-postes)
 - [Désinstaller des logiciels des postes](#désinstaller-des-logiciels-des-postes)
+- [Remplacer une version antérieure](#remplacer-une-version-antérieure)
 - [Sur un serveur, en HTTPS](#sur-un-serveur-en-https)
 - [Qui peut se connecter](#qui-peut-se-connecter)
 - [Garder l'outil à jour](#garder-loutil-à-jour)
@@ -98,6 +99,7 @@ Ces écrans viennent de la démonstration intégrée, qui tourne face à un Intu
 - **Fonctionne avec n'importe quel tenant** : rien de propre à un tenant n'est stocké dans ce dépôt ni dans l'image. Chaque organisation utilise sa propre inscription d'application.
 - **Inventaire des postes** (facultatif, en lecture seule) : les logiciels trouvés sur vos postes Windows, par logiciel ou par poste, y compris ceux qui n'ont pas été installés par Intune.
 - **Désinstallation de logiciels** (facultatif) : retirer un logiciel des postes en passant par Intune, y compris un logiciel qu'Intune n'a pas installé, avec le résultat par poste.
+- **Remplacement d'anciennes versions** (facultatif) : publier une nouvelle version uniquement pour les postes qui en ont une plus ancienne, en retirant d'abord l'ancienne quand son installeur ne sait pas mettre à jour par-dessus.
 - **Interface en français et en anglais**, un fichier par langue.
 
 ## Ce qu'il vous faut
@@ -320,6 +322,26 @@ Sur la page d'une application Intune, **Désinstaller des postes** affecte cette
 - Les règles de désinstallation sont conservées dans `config/removals.json`. Rien n'est écrit dans les Notes de vos applications.
 - Le script a été testé sous Windows avec de vrais installeurs, mais pas encore à travers un vrai tenant Intune : faites votre première désinstallation sur un logiciel sans importance et un ou deux postes.
 
+## Remplacer une version antérieure
+
+Quand un logiciel est déjà présent sur certains postes — qu'Intune l'ait installé ou non — vous pouvez publier une version plus récente pour ces postes uniquement. Il faut l'option [inventaire des postes](#inventaire-des-postes).
+
+1. Dans **Inventaire des postes**, ouvrez le logiciel et cliquez sur **Remplacer par une version plus récente**. (Vous pouvez aussi cocher la même option sur l'écran de vérification de n'importe quelle publication.)
+2. Donnez le lien du nouvel installeur, comme pour toute application.
+3. Sur l'écran de vérification, le bloc **Postes ayant déjà une version antérieure** est coché, avec le nom venu de l'inventaire. Vérifiez :
+   - les **noms** : exactement ceux de l'inventaire ; ajoutez les autres noms du même logiciel s'il en a plusieurs ;
+   - **Antérieure à la version** : par défaut, la version que vous publiez ;
+   - **comment l'ancienne version est remplacée** :
+
+     | Choix | Ce qui se passe sur le poste |
+     |---|---|
+     | L'installeur met à jour par-dessus | Le cas habituel. Rien n'est ajouté au paquet. |
+     | Désinstaller d'abord l'ancienne version, puis installer | Pour les logiciels qui ne se mettent pas à jour par-dessus. Le paquet embarque aussi le script de désinstallation : l'ancienne version est retirée silencieusement, puis l'installeur est lancé. **Si l'ancienne version ne peut pas être retirée, la nouvelle n'est pas installée.** |
+
+Dans les deux cas, Intune ne propose l'application qu'aux postes où une version antérieure est trouvée : vous pouvez l'affecter à *Tous les appareils* sans l'installer partout.
+
+Avec « désinstaller d'abord », les mêmes règles que pour une désinstallation s'appliquent : les MSI et les logiciels déclarant une désinstallation silencieuse sont retirés automatiquement, les autres ont besoin de la commande de l'éditeur, et les logiciels protégés sont refusés.
+
 ## Sur un serveur, en HTTPS
 
 En dehors de `localhost`, la connexion Microsoft exige HTTPS. Le profil `https` démarre un petit serveur web (Caddy) devant l'outil.
@@ -450,7 +472,7 @@ docker compose logs -f app
 
 - Applications Windows Win32 uniquement (pas le Microsoft Store, macOS ni les mobiles).
 - La désinstallation de logiciels dépend de l'existence d'une désinstallation silencieuse pour chaque logiciel ; voir [Désinstaller des logiciels des postes](#désinstaller-des-logiciels-des-postes).
-- Un seul fichier d'installation par application. Un installeur qui a besoin de plusieurs fichiers à côté de lui doit d'abord être regroupé en un seul EXE ou MSI.
+- Un seul fichier d'installation par application (l'outil y ajoute ses propres scripts quand vous choisissez de désinstaller d'abord une ancienne version). Un installeur qui a besoin de plusieurs fichiers à côté de lui doit d'abord être regroupé en un seul EXE ou MSI.
 - La commande de désinstallation et la règle de détection d'un EXE ne se devinent pas à partir du fichier : vous les saisissez une fois, puis elles sont reprises à chaque mise à jour.
 - Les règles de détection par script sont recopiées telles quelles.
 - La version la plus ancienne est supprimée d'Intune quand une troisième est publiée (sauf si vous décochez la case).

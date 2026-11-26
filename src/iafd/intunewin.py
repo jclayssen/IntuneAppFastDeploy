@@ -62,13 +62,22 @@ def _b64(value: bytes) -> str:
     return base64.b64encode(value).decode("ascii")
 
 
-def build_package(setup_path: Path, work_dir: Path) -> Package:
-    """Zip then encrypt ``setup_path``. Returns the keys Intune needs."""
+def build_package(
+    setup_path: Path, work_dir: Path, extra_files: tuple[Path, ...] | list[Path] = ()
+) -> Package:
+    """Zip then encrypt ``setup_path`` (and any ``extra_files`` shipped next to it).
+
+    ``setup_path`` is what Intune calls the setup file. Returns the keys Intune needs.
+    """
     work_dir.mkdir(parents=True, exist_ok=True)
     inner = work_dir / "content.zip"
     encrypted = work_dir / ENCRYPTED_NAME
+    names = [path.name.lower() for path in (setup_path, *extra_files)]
+    if len(set(names)) != len(names):
+        raise ValueError("two files of the package have the same name")
     with zipfile.ZipFile(inner, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
-        archive.write(setup_path, setup_path.name)
+        for path in (setup_path, *extra_files):
+            archive.write(path, path.name)
 
     encryption_key = os.urandom(32)
     mac_key = os.urandom(32)

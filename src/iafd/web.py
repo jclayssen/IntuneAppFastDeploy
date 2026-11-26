@@ -616,6 +616,35 @@ def create_app(
             job.data["package"] = intunewin.build_package(job.data["path"], job.work_dir / "pkg")
         return job.data["package"]
 
+    def replacement(form: dict) -> dict | None:
+        """Settings of "remove the older version first", validated, or None."""
+        replace = removal.clean_replace(form.get("replace"), str(form.get("version") or ""))
+        if replace and replace["mode"] == "reinstall":
+            # The wrapper uninstalls software: the protected list applies.
+            publish.check_removal(replace["config"], settings.config_dir)
+            return replace
+        return None
+
+    def publish_package(job: Job, form: dict) -> intunewin.Package:
+        """The package to send: the installer alone, or with the scripts that
+        remove the older version before installing."""
+        replace = replacement(form)
+        if replace is None:
+            return ensure_package(job)
+        config = replace["config"]
+        folder = job.work_dir / "replace"
+        folder.mkdir(parents=True, exist_ok=True)
+        remove = folder / removal.script_file_name(config)
+        remove.write_text(removal.render_script(config, "Uninstall"), encoding="utf-8-sig")
+        wrapper = folder / removal.replace_script_name(config)
+        wrapper.write_text(
+            removal.render_replace_script(config, str(form.get("install_command") or "")),
+            encoding="utf-8-sig",
+        )
+        return intunewin.build_package(
+            wrapper, job.work_dir / "pkg-replace", [job.data["path"], remove]
+        )
+
     @app.get("/api/jobs/{job_id}/intunewin")
     def job_intunewin(request: Request, job_id: str) -> Response:
         _, job = job_for(request, job_id)
@@ -652,10 +681,11 @@ def create_app(
             appmodel.clone_app_body(existing, form, analysis)
         else:
             appmodel.inplace_patch(existing, form, analysis, "pending")
+        replacement(form)
 
         def work(job: Job) -> None:
             job.set_step("step.package")
-            package = ensure_package(job)
+            package = publish_package(job, form)
             graph = make_graph(session)
             try:
                 if mode == "new":

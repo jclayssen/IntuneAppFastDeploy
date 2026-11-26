@@ -8,6 +8,8 @@ from __future__ import annotations
 import copy
 import re
 
+from . import removal
+
 WIN32 = "#microsoft.graph.win32LobApp"
 ASSIGNMENT = "#microsoft.graph.mobileAppAssignment"
 SUPERSEDENCE = "#microsoft.graph.mobileAppSupersedence"
@@ -261,17 +263,30 @@ def intunewin_name(setup_file: str) -> str:
     return setup_file.rsplit(".", 1)[0] + ".intunewin"
 
 
+def _replace(form: dict) -> dict | None:
+    return removal.clean_replace(form.get("replace"), str(form.get("version") or ""))
+
+
 def _content_fields(form: dict, analysis: dict) -> dict:
     """Fields that change with every new installer."""
-    return {
+    replace = _replace(form)
+    setup_file = analysis["file_name"]
+    install = _require(form, "install_command", "error.install_required")
+    if replace and replace["mode"] == "reinstall":
+        # The real install command runs inside the wrapper, after the old version is removed.
+        removal.render_replace_script(replace["config"], install)
+        setup_file = removal.replace_script_name(replace["config"])
+        install = removal.replace_install_command(replace["config"])
+    fields = {
         "displayName": _require(form, "display_name", "error.name_required"),
         "displayVersion": str(form.get("version") or "").strip(),
         "fileName": intunewin_name(analysis["file_name"]),
-        "setupFilePath": analysis["file_name"],
-        "installCommandLine": _require(form, "install_command", "error.install_required"),
+        "setupFilePath": setup_file,
+        "installCommandLine": install,
         "uninstallCommandLine": _require(form, "uninstall_command", "error.uninstall_required"),
         "msiInformation": _msi_information(form, analysis),
     }
+    return fields
 
 
 def _rules_for(form: dict, analysis: dict, existing: dict | None) -> list[dict]:
@@ -287,8 +302,17 @@ def _rules_for(form: dict, analysis: dict, existing: dict | None) -> list[dict]:
             str(form.get("version") or ""),
             (analysis.get("msi") or {}).get("product_code", ""),
         )
-        return bumped
-    return requirements + detection_rules(detection)
+        return _with_replace(bumped, form)
+    return _with_replace(requirements + detection_rules(detection), form)
+
+
+def _with_replace(rules: list[dict], form: dict) -> list[dict]:
+    """Add (or renew) the rule that limits the app to devices with an older version."""
+    rules = [rule for rule in rules if not removal.is_tool_requirement(rule)]
+    replace = _replace(form)
+    if replace:
+        rules.append(removal.requirement_rule(replace["config"]))
+    return rules
 
 
 def new_app_body(form: dict, analysis: dict) -> dict:

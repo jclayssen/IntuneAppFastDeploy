@@ -301,5 +301,19 @@
   "error.removal_protected": "Logiciel protégé, l'outil refuse de le désinstaller :",
   "error.removal_confirm": "Le nom saisi ne correspond pas au premier logiciel",
   "error.removal_not_found": "Cette règle de désinstallation n'existe plus",
-  "removal.command_short": "Commande de désinstallation"
+  "removal.command_short": "Commande de désinstallation",
+  "error.replace_bad_mode": "Méthode de remplacement inconnue",
+  "error.replace_bad_install": "La commande d'installation n'est pas valide pour un remplacement : elle doit tenir sur une ligne",
+  "replace.start": "Remplacer par une version plus récente",
+  "replace.title": "Postes ayant déjà une version antérieure",
+  "replace.enable": "Installer seulement sur les postes où une version antérieure est trouvée",
+  "replace.hint": "Intune ne propose alors cette application qu'aux postes qui ont l'un de ces logiciels, dans une version antérieure à celle indiquée ci-dessous. Les noms doivent être exactement ceux de l'inventaire.",
+  "replace.no_name": "Aucun logiciel choisi",
+  "replace.below": "Antérieure à la version",
+  "replace.mode": "Comment l'ancienne version est remplacée",
+  "replace.upgrade": "L'installeur met à jour par-dessus (cas habituel)",
+  "replace.reinstall": "Désinstaller d'abord l'ancienne version, puis installer",
+  "replace.upgrade_hint": "Rien d'autre ne change : le nouvel installeur fait la montée de version.",
+  "replace.reinstall_hint": "Pour les logiciels qui ne se mettent pas à jour par-dessus. L'ancienne version est retirée silencieusement ; si cela échoue, la nouvelle n'est pas installée.",
+  "replace.command_hint": "Nécessaire seulement si l'ancienne version n'est ni un MSI ni un logiciel déclarant une désinstallation silencieuse. {UninstallString} désigne son désinstalleur."
 }

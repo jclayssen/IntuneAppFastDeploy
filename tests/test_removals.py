@@ -1,11 +1,15 @@
 """Removal rules: protected list, Intune payloads and the whole flow on the fake tenant."""
 
 import base64
+import io
 import json
 import re
 import time
+import zipfile
 
 import pytest
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from fastapi.testclient import TestClient
 
 from iafd import appmodel, protected, removal
@@ -330,3 +334,199 @@ def test_removals_need_the_inventory_option(tmp_path):
         off.headers["X-IAFD"] = "1"
         assert off.get("/api/removals").status_code == 404
         assert off.post("/api/removals", json={}).status_code == 404
+
+
+# --------------------------------------------------------------------------- older versions
+
+
+def exe_analysis():
+    return {
+        "kind": "exe",
+        "file_name": "setup-2.0.exe",
+        "version": "2.0",
+        "product_name": "App",
+        "publisher": "Pub",
+        "architecture": "any",
+        "install_command": '"setup-2.0.exe" /S',
+        "uninstall_command": "",
+        "msi": {},
+    }
+
+
+def replace_form(**replace):
+    form = appmodel.propose_form(exe_analysis(), None)
+    form.update(
+        uninstall_command="u /S",
+        detection={
+            "type": "file",
+            "path": "C:\\App",
+            "name": "app.exe",
+            "operator": "version_ge",
+            "value": "2.0",
+        },
+    )
+    form["replace"] = {"enabled": True, "names": ["Old App"], **replace}
+    return form
+
+
+def test_upgrade_only_where_an_older_version_is_present():
+    body = appmodel.new_app_body(replace_form(), exe_analysis())
+    assert body["installCommandLine"] == '"setup-2.0.exe" /S'  # the installer does the upgrade
+    assert body["setupFilePath"] == "setup-2.0.exe"
+    requirement = [rule for rule in body["rules"] if rule["ruleType"] == "requirement"]
+    assert len(requirement) == 1 and requirement[0]["comparisonValue"] == "present"
+    script = base64.b64decode(requirement[0]["scriptContent"]).decode("utf-8-sig")
+    assert "[string]$Mode = 'Requirement'" in script
+    embedded = json.loads(base64.b64decode(re.search(r"ConfigBase64 = '([^']+)'", script).group(1)))
+    # Older than the version being published, unless another limit is given.
+    assert embedded["versions"] == {"mode": "below", "value": "2.0"}
+    custom = appmodel.new_app_body(replace_form(below="1.5"), exe_analysis())
+    script = base64.b64decode(custom["rules"][-1]["scriptContent"]).decode("utf-8-sig")
+    assert (
+        json.loads(base64.b64decode(re.search(r"ConfigBase64 = '([^']+)'", script).group(1)))[
+            "versions"
+        ]["value"]
+        == "1.5"
+    )
+
+
+def test_remove_first_wraps_the_install_command():
+    body = appmodel.new_app_body(replace_form(mode="reinstall"), exe_analysis())
+    assert body["setupFilePath"] == "Replace-old-app.ps1"
+    assert body["installCommandLine"].endswith('-File "Replace-old-app.ps1"')
+    wrapper = removal.render_replace_script(
+        removal.clean_replace({"enabled": True, "names": ["Old App"], "mode": "reinstall"}, "2.0")[
+            "config"
+        ],
+        '"setup-2.0.exe" /S',
+    )
+    payload = json.loads(base64.b64decode(re.search(r"ConfigBase64 = '([^']+)'", wrapper).group(1)))
+    assert payload == {
+        "remove_script": "Remove-old-app.ps1",
+        "install_command": '"setup-2.0.exe" /S',
+    }
+    assert "setup-2.0.exe" not in wrapper  # typed text never becomes code
+
+
+def test_replace_is_optional_and_validated():
+    form = replace_form()
+    form["replace"]["enabled"] = False
+    assert all(
+        r["ruleType"] == "detection" for r in appmodel.new_app_body(form, exe_analysis())["rules"]
+    )
+    with pytest.raises(removal.RemovalError, match="error.removal_no_name"):
+        appmodel.new_app_body(replace_form(names=[]), exe_analysis())
+    with pytest.raises(removal.RemovalError, match="error.replace_bad_mode"):
+        appmodel.new_app_body(replace_form(mode="magic"), exe_analysis())
+    with pytest.raises(removal.RemovalError, match="error.removal_bad_versions"):
+        appmodel.new_app_body(replace_form(below="soon"), exe_analysis())
+
+
+def test_a_new_version_renews_the_requirement_instead_of_stacking_it():
+    first = appmodel.new_app_body(replace_form(), exe_analysis())
+    existing = {**first, "id": "a", "displayVersion": "2.0"}
+    analysis = {**exe_analysis(), "version": "3.0", "file_name": "setup-3.0.exe"}
+    form = appmodel.propose_form(analysis, existing)
+    form["replace"] = {"enabled": True, "names": ["Old App"]}
+    renewed = appmodel.clone_app_body(existing, form, analysis)
+    requirement = [rule for rule in renewed["rules"] if rule["ruleType"] == "requirement"]
+    assert len(requirement) == 1
+    script = base64.b64decode(requirement[0]["scriptContent"]).decode("utf-8-sig")
+    assert (
+        json.loads(base64.b64decode(re.search(r"ConfigBase64 = '([^']+)'", script).group(1)))[
+            "versions"
+        ]["value"]
+        == "3.0"
+    )
+    # Without the option, the rule added by the tool is dropped rather than left stale.
+    form["replace"] = {"enabled": False}
+    assert all(
+        r["ruleType"] == "detection"
+        for r in appmodel.clone_app_body(existing, form, analysis)["rules"]
+    )
+
+
+def test_publishing_with_remove_first_ships_the_three_files(client, tmp_path):
+
+    upload = client.post(
+        "/api/analyze/upload", files={"file": ("setup-2.0.exe", b"MZ" + b"\x00" * 300)}, data={}
+    )
+    job = wait_ready(client, upload.json())
+    form = job["result"]["form"]
+    form.update(
+        mode="new",
+        publisher="Pub",
+        uninstall_command="u /S",
+        rollout="none",
+        detection={
+            "type": "file",
+            "path": "C:\\App",
+            "name": "app.exe",
+            "operator": "version_ge",
+            "value": "2.0",
+        },
+        replace={
+            "enabled": True,
+            "names": ["WinRAR 5.91 (64-bit)"],
+            "mode": "reinstall",
+            "below": "7.0",
+            "command": "{UninstallString} /S",
+        },
+    )
+    protected_first = {**form, "replace": {**form["replace"], "names": ["Microsoft Defender"]}}
+    refused = client.post(f"/api/jobs/{job['id']}/publish", json=protected_first)
+    assert refused.json()["error"]["code"] == "error.removal_protected"
+
+    done = wait(client, client.post(f"/api/jobs/{job['id']}/publish", json=form).json())
+    assert done["state"] == "done", done
+    intune = client.app.state.intune
+    app = intune.apps[done["result"]["outcome"]["app_id"]]
+    assert app["setupFilePath"] == "Replace-winrar-5-91-64-bit.ps1"
+    assert [rule["ruleType"] for rule in app["rules"]] == ["detection", "requirement"]
+
+    # What was uploaded decrypts to the installer plus the two scripts.
+    info = intune.encryption
+    blob = intune.committed_blob
+    decryptor = Cipher(
+        algorithms.AES(base64.b64decode(info["encryptionKey"])),
+        modes.CBC(base64.b64decode(info["initializationVector"])),
+    ).decryptor()
+    unpadder = padding.PKCS7(128).unpadder()
+    plain = (
+        unpadder.update(decryptor.update(blob[48:]) + decryptor.finalize()) + unpadder.finalize()
+    )
+    with zipfile.ZipFile(io.BytesIO(plain)) as archive:
+        assert sorted(archive.namelist()) == [
+            "Remove-winrar-5-91-64-bit.ps1",
+            "Replace-winrar-5-91-64-bit.ps1",
+            "setup-2.0.exe",
+        ]
+        remove = archive.read("Remove-winrar-5-91-64-bit.ps1").decode("utf-8-sig")
+    assert "[string]$Mode = 'Uninstall'" in remove
+
+
+def wait_ready(client, job):
+    for _ in range(200):
+        job = client.get(f"/api/jobs/{job['id']}").json()
+        if job["state"] in ("ready", "error"):
+            return job
+        time.sleep(0.05)
+    raise AssertionError("analysis did not finish")
+
+
+def test_a_package_can_hold_several_files(tmp_path):
+    from iafd import intunewin
+
+    main, extra = tmp_path / "Replace-x.ps1", tmp_path / "setup.exe"
+    main.write_text("wrapper", "utf-8")
+    extra.write_bytes(b"MZ" + b"\x01" * 2000)
+    package = intunewin.build_package(main, tmp_path / "pkg", [extra])
+    assert package.setup_file == "Replace-x.ps1"
+    out = intunewin.extract_intunewin(
+        intunewin.write_intunewin(package, tmp_path / "x.intunewin"), tmp_path / "out"
+    )
+    assert sorted(p.name for p in out.iterdir()) == ["Replace-x.ps1", "setup.exe"]
+    assert (out / "setup.exe").read_bytes() == extra.read_bytes()
+    with pytest.raises(ValueError):
+        intunewin.build_package(main, tmp_path / "pkg2", [tmp_path / "REPLACE-X.PS1"])
+    assert zipfile.is_zipfile(tmp_path / "x.intunewin")
