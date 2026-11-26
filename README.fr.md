@@ -17,6 +17,7 @@ Vous collez le lien du nouvel installeur, l'outil le télécharge, lit ce qu'il 
 - [Étape 2 — Installer sur votre PC](#étape-2--installer-sur-votre-pc)
 - [Étape 3 — Utiliser](#étape-3--utiliser)
 - [Groupes pilote et production](#groupes-pilote-et-production)
+- [Inventaire des postes](#inventaire-des-postes)
 - [Sur un serveur, en HTTPS](#sur-un-serveur-en-https)
 - [Qui peut se connecter](#qui-peut-se-connecter)
 - [Garder l'outil à jour](#garder-loutil-à-jour)
@@ -51,6 +52,10 @@ Ces écrans viennent de la démonstration intégrée, qui tourne face à un Intu
 
 <img src="docs/screenshots/fr/07-pilot.png" alt="Page d'une application en phase pilote, avec les groupes pilote et production et le bouton Passer en production" width="780">
 
+**Inventaire des postes** (facultatif) : les logiciels qu'Intune a trouvés sur les postes, qu'ils aient été installés par Intune ou non.
+
+<img src="docs/screenshots/fr/09-inventory.png" alt="Inventaire des logiciels trouvés sur les postes, avec éditeur, version et nombre d'installations" width="780">
+
 <details>
 <summary>Autres écrans : connexion, une application en production, une nouvelle application</summary>
 
@@ -66,6 +71,10 @@ Ces écrans viennent de la démonstration intégrée, qui tourne face à un Intu
 
 <img src="docs/screenshots/fr/08-new-application.png" alt="Écran de vérification pour une nouvelle application à partir d'un installeur EXE" width="780">
 
+**Un poste** et les logiciels qui y ont été trouvés.
+
+<img src="docs/screenshots/fr/10-device.png" alt="Page d'un poste avec son utilisateur, son modèle, sa version de Windows et les logiciels trouvés" width="780">
+
 </details>
 
 ## Ce que fait l'outil
@@ -78,6 +87,7 @@ Ces écrans viennent de la démonstration intégrée, qui tourne face à un Intu
 - **Nouvelle application** : même écran, vous renseignez les champs une fois. Pour un MSI, tout est lu dans le fichier. Pour un EXE, l'outil reconnaît les installeurs courants (Inno Setup, NSIS, WiX Burn, InstallShield, Advanced Installer, Squirrel) et propose l'option silencieuse.
 - **Crée le `.intunewin` sous Linux**, sans l'outil Microsoft réservé à Windows.
 - **Fonctionne avec n'importe quel tenant** : rien de propre à un tenant n'est stocké dans ce dépôt ni dans l'image. Chaque organisation utilise sa propre inscription d'application.
+- **Inventaire des postes** (facultatif, en lecture seule) : les logiciels trouvés sur vos postes Windows, par logiciel ou par poste, y compris ceux qui n'ont pas été installés par Intune.
 - **Interface en français et en anglais**, un fichier par langue.
 
 ## Ce qu'il vous faut
@@ -213,6 +223,36 @@ Au moment de publier une nouvelle version, vous choisissez *Les groupes pilotes 
 
 Ces réglages suivent l'application d'une version à la suivante. Ils sont stockés uniquement dans `config/rollout.json` — rien n'est écrit dans le champ Notes ni ailleurs dans Intune.
 
+## Inventaire des postes
+
+Cette section facultative montre les logiciels qu'Intune a trouvés sur vos postes Windows — tout ce qui apparaît dans *Applications → Surveiller → Applications découvertes* du portail Intune, qu'ils aient été installés par Intune ou non.
+
+- **Par logiciel** : chaque programme avec son éditeur, les versions rencontrées et le nombre d'installations ; ouvrez-en un pour voir quels postes ont quelle version.
+- **Par poste** : chaque poste Windows avec son utilisateur, son modèle et son dernier contact avec Intune ; ouvrez-en un pour voir tout ce qui y a été trouvé.
+
+Elle est en lecture seule : rien n'est modifié sur les postes ni dans Intune.
+
+### L'activer
+
+1. Dans l'inscription d'application Entra (**API autorisées → Ajouter une autorisation → Microsoft Graph → Autorisations déléguées**), ajoutez `DeviceManagementManagedDevices.Read.All`, puis cliquez de nouveau sur **Accorder un consentement d'administrateur**.
+2. Dans `docker-compose.yml`, mettez :
+
+   ```yaml
+   ENABLE_DEVICE_INVENTORY: "true"
+   ```
+
+3. Lancez `docker compose up -d`, puis déconnectez-vous et reconnectez-vous pour que la nouvelle permission soit prise en compte.
+
+Faites la première étape avant la deuxième : si l'option est activée alors que la permission n'a pas été accordée, la connexion échoue avec `AADSTS65001`.
+
+### À savoir
+
+- Intune actualise cet inventaire environ une fois par jour pour les logiciels Windows, et seulement sur les postes où tourne l'extension de gestion Intune. Un programme installé ce matin peut ne pas encore y figurer.
+- Intune ne remonte que le nom, la version et l'éditeur. Il ne dit pas comment un programme a été installé.
+- Les appareils personnels ne sont pas inventoriés par Intune.
+- L'outil garde ce qu'il a lu pendant cinq minutes ; **Recharger** le relit.
+- Un même programme peut apparaître sous plusieurs noms quand son nom contient la version (par exemple *7-Zip 19.00* et *7-Zip 23.01*).
+
 ## Sur un serveur, en HTTPS
 
 En dehors de `localhost`, la connexion Microsoft exige HTTPS. Le profil `https` démarre un petit serveur web (Caddy) devant l'outil.
@@ -297,6 +337,7 @@ Tous les réglages vont dans la section `environment:` du service `app` de `dock
 | `PUBLIC_URL` | `http://localhost:8080` | Adresse saisie dans le navigateur. L'URI de redirection est `PUBLIC_URL` + `/auth/callback`. |
 | `DEFAULT_LANGUAGE` | `en` | Langue utilisée quand celle du navigateur n'est pas disponible. Mettez `fr` pour le français. |
 | `ENABLE_GROUP_PICKER` | `false` | Chercher les groupes par nom (demande `GroupMember.Read.All`). |
+| `ENABLE_DEVICE_INVENTORY` | `false` | Afficher les logiciels trouvés sur les postes (demande `DeviceManagementManagedDevices.Read.All`). Voir [Inventaire des postes](#inventaire-des-postes). |
 | `ALLOWED_USERS` | vide | Identifiants de connexion autorisés, séparés par des virgules. Vide : tout le tenant. |
 | `MAX_DOWNLOAD_MB` | `8192` | Taille maximale d'un installeur. |
 | `SESSION_HOURS` | `12` | Heures avant de devoir se reconnecter. |
@@ -382,6 +423,7 @@ Organisation :
 | `src/iafd/intunewin.py` | Créer (et déballer) les paquets `.intunewin` |
 | `src/iafd/appmodel.py` | Construire les données envoyées à Microsoft Graph (fonctions pures) |
 | `src/iafd/graph.py`, `publish.py` | Appels Microsoft Graph et enchaînements de publication |
+| `src/iafd/inventory.py` | Regroupement, recherche et pagination de l'inventaire des postes |
 | `src/iafd/auth.py`, `web.py`, `jobs.py`, `store.py` | Connexion, API HTTP, tâches de fond, configuration locale |
 | `src/iafd/static/`, `src/iafd/locales/` | Interface et ses textes |
 
@@ -397,7 +439,7 @@ node docs/screenshots/make.js fr
 
 ### Référence Microsoft Graph
 
-L'outil utilise le point d'accès bêta de Microsoft Graph. Pages par rapport auxquelles le code a été vérifié : [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta).
+L'outil utilise le point d'accès bêta de Microsoft Graph. Pages par rapport auxquelles le code a été vérifié : [detectedApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-detectedapp?view=graph-rest-beta), [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta).
 
 ## Ajouter une langue
 

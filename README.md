@@ -17,6 +17,7 @@ You paste the link of the new installer, the tool downloads it, reads what it ca
 - [Step 2 — Install on your PC](#step-2--install-on-your-pc)
 - [Step 3 — Use it](#step-3--use-it)
 - [Pilot and production groups](#pilot-and-production-groups)
+- [Device inventory](#device-inventory)
 - [Running on a server with HTTPS](#running-on-a-server-with-https)
 - [Who can sign in](#who-can-sign-in)
 - [Keeping the tool up to date](#keeping-the-tool-up-to-date)
@@ -51,6 +52,10 @@ These screens come from the built-in demo, which runs against a simulated Intune
 
 <img src="docs/screenshots/en/07-pilot.png" alt="Application page in its pilot phase, with pilot and production groups and a Go to production button" width="780">
 
+**Device inventory** (optional): the software Intune found on the devices, whether or not Intune installed it.
+
+<img src="docs/screenshots/en/09-inventory.png" alt="Inventory of the software found on the devices, with publisher, version and number of installations" width="780">
+
 <details>
 <summary>More screens: sign-in, an application in production, a new application</summary>
 
@@ -66,6 +71,10 @@ These screens come from the built-in demo, which runs against a simulated Intune
 
 <img src="docs/screenshots/en/08-new-application.png" alt="Review screen for a new application from an EXE installer" width="780">
 
+**One device** and the software found on it.
+
+<img src="docs/screenshots/en/10-device.png" alt="Page of a device with its user, model, Windows version and the software found on it" width="780">
+
 </details>
 
 ## What it does
@@ -78,6 +87,7 @@ These screens come from the built-in demo, which runs against a simulated Intune
 - **New application**: same screen, you fill in the fields once. For an MSI everything is read from the file. For an EXE the tool recognizes common installers (Inno Setup, NSIS, WiX Burn, InstallShield, Advanced Installer, Squirrel) and proposes the silent switch.
 - **Creates the `.intunewin` on Linux**, without Microsoft's Windows-only tool.
 - **Works with any tenant**: nothing about a tenant is stored in this repository or in the image. Each organization uses its own app registration.
+- **Device inventory** (optional, read-only): the software found on your Windows devices, by software or by device, including what was not installed through Intune.
 - **English and French interface**, one file per language.
 
 ## What you need
@@ -211,6 +221,36 @@ When you publish a new version you choose *The pilot groups first*, *Production 
 
 These settings follow the application from one version to the next. They are stored in `config/rollout.json` only — nothing is written in the Notes field or anywhere else in Intune.
 
+## Device inventory
+
+This optional section shows the software Intune has found on your Windows devices — everything that appears in *Apps → Monitor → Discovered apps* in the Intune portal, whether or not it was installed through Intune.
+
+- **By software**: each program with its publisher, the versions seen and the number of installations; open one to see which devices have which version.
+- **By device**: each Windows device with its user, model and last contact with Intune; open one to see everything found on it.
+
+It is read-only: nothing is changed on the devices or in Intune.
+
+### Enabling it
+
+1. In the Entra app registration (**API permissions → Add a permission → Microsoft Graph → Delegated permissions**), add `DeviceManagementManagedDevices.Read.All`, then click **Grant admin consent** again.
+2. In `docker-compose.yml`, set:
+
+   ```yaml
+   ENABLE_DEVICE_INVENTORY: "true"
+   ```
+
+3. Run `docker compose up -d`, then sign out and sign in again so the new permission is taken into account.
+
+Do the first step before the second: if the option is on while the permission has not been granted, sign-in fails with `AADSTS65001`.
+
+### What to know
+
+- Intune refreshes this inventory about once a day for Windows software, and only on devices that run the Intune Management Extension. A program installed this morning may not be listed yet.
+- Intune reports the name, version and publisher only. It does not say how a program was installed.
+- Personal devices are not inventoried by Intune.
+- The tool keeps what it read for five minutes; **Reload** reads it again.
+- The same program can appear under several names when its name contains the version (for example *7-Zip 19.00* and *7-Zip 23.01*).
+
 ## Running on a server with HTTPS
 
 Away from `localhost`, Microsoft sign-in requires HTTPS. The `https` profile starts a small web server (Caddy) in front of the tool.
@@ -295,6 +335,7 @@ All settings go in the `environment:` section of the `app` service in `docker-co
 | `PUBLIC_URL` | `http://localhost:8080` | Address typed in the browser. The redirect URI is `PUBLIC_URL` + `/auth/callback`. |
 | `DEFAULT_LANGUAGE` | `en` | Language used when the browser's language is not available. |
 | `ENABLE_GROUP_PICKER` | `false` | Search groups by name (needs `GroupMember.Read.All`). |
+| `ENABLE_DEVICE_INVENTORY` | `false` | Show the software found on the devices (needs `DeviceManagementManagedDevices.Read.All`). See [Device inventory](#device-inventory). |
 | `ALLOWED_USERS` | empty | Comma-separated sign-in names allowed to use the tool. Empty: anyone in the tenant. |
 | `MAX_DOWNLOAD_MB` | `8192` | Largest installer accepted. |
 | `SESSION_HOURS` | `12` | Hours before a new sign-in is required. |
@@ -380,6 +421,7 @@ Layout:
 | `src/iafd/intunewin.py` | Build (and unpack) `.intunewin` packages |
 | `src/iafd/appmodel.py` | Build the Microsoft Graph payloads (pure functions) |
 | `src/iafd/graph.py`, `publish.py` | Microsoft Graph calls and the publishing workflows |
+| `src/iafd/inventory.py` | Grouping, search and paging of the device inventory |
 | `src/iafd/auth.py`, `web.py`, `jobs.py`, `store.py` | Sign-in, HTTP API, background tasks, local configuration |
 | `src/iafd/static/`, `src/iafd/locales/` | Interface and its texts |
 
@@ -395,7 +437,7 @@ node docs/screenshots/make.js fr
 
 ### Microsoft Graph reference
 
-The tool uses the beta endpoint of Microsoft Graph. Pages the code was checked against: [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta).
+The tool uses the beta endpoint of Microsoft Graph. Pages the code was checked against: [detectedApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-detectedapp?view=graph-rest-beta), [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta).
 
 ## Adding a language
 

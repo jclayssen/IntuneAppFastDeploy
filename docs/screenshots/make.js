@@ -93,6 +93,20 @@ const PILOT = { en: "Pilot - IT team", fr: "Pilote - équipe informatique" }[lan
   await detection.nth(1).fill("7zFM.exe");
   await shot("08-new-application");
 
+  // 9. Device inventory: the software Intune found on the devices.
+  await page.goto(base);
+  await page.waitForSelector("table");
+  await page.locator(`#nav button:has-text("${t("nav.inventory")}")`).click();
+  await page.waitForSelector("main table");
+  await shot("09-inventory");
+
+  // 10. One device and its software.
+  await page.locator(`main .tabs button:has-text("${t("inventory.by_device")}")`).click();
+  await page.waitForFunction(() => document.querySelectorAll("main tbody tr").length === 8);
+  await page.locator("main tbody button.linkish").nth(2).click();
+  await page.waitForSelector("dl.facts");
+  await shot("10-device");
+
   await browser.close();
 })().catch((error) => {
   console.error(error);

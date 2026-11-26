@@ -26,6 +26,8 @@ class FakeIntune:
         self.committed_blob: bytes | None = None
         self.calls: list[tuple[str, str]] = []
         self.fail_commit = False
+        self.devices: dict[str, dict] = {}
+        self.installed: dict[str, list[tuple[str, str, str]]] = {}  # device id -> software
         self._ids = itertools.count(1)
 
     def add_app(self, **fields) -> dict:
@@ -45,6 +47,75 @@ class FakeIntune:
         self.assignments[app_id] = []
         self.relationships[app_id] = []
         return app
+
+    def add_device(self, name: str, user: str, software: list[tuple[str, str, str]]) -> dict:
+        """A Windows device with (name, version, publisher) entries installed on it."""
+        device_id = f"dev-{len(self.devices) + 1}"
+        self.devices[device_id] = {
+            "id": device_id,
+            "deviceName": name,
+            "userPrincipalName": user,
+            "operatingSystem": "Windows",
+            "osVersion": "10.0.26100.2314",
+            "manufacturer": "Contoso",
+            "model": "Laptop 14",
+            "lastSyncDateTime": "2026-11-25T08:15:00Z",
+        }
+        self.installed[device_id] = software
+        return self.devices[device_id]
+
+    def _detected(self, device_id: str | None = None) -> list[dict]:
+        rows: dict[tuple[str, str, str], list[str]] = {}
+        for owner, software in self.installed.items():
+            if device_id in (None, owner):
+                for entry in software:
+                    rows.setdefault(entry, []).append(owner)
+        return [
+            {
+                "id": "det" + str(abs(hash(entry)) % 10**12),
+                "displayName": entry[0],
+                "version": entry[1],
+                "publisher": entry[2],
+                "platform": "windows",
+                "deviceCount": len(owners),
+                "_devices": owners,
+            }
+            for entry, owners in sorted(rows.items())
+        ]
+
+    def _inventory(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path.removeprefix("/beta/deviceManagement")
+        assert request.method == "GET", "the inventory is read-only"
+        public = lambda row: {k: v for k, v in row.items() if not k.startswith("_")}  # noqa: E731
+        if path == "/detectedApps":
+            rows = [public(row) for row in self._detected()]
+            # An iPhone app proves that other platforms are filtered out.
+            rows.append(
+                {
+                    "id": "ios1",
+                    "displayName": "Outlook",
+                    "version": "4.1",
+                    "platform": "ios",
+                    "deviceCount": 3,
+                }
+            )
+            return httpx.Response(200, json={"value": rows})
+        match = re.fullmatch(r"/detectedApps/([^/]+)/managedDevices", path)
+        if match:
+            row = next((r for r in self._detected() if r["id"] == match.group(1)), None)
+            if row is None:
+                return httpx.Response(404, json={"error": {"code": "NotFound", "message": ""}})
+            return httpx.Response(200, json={"value": [self.devices[d] for d in row["_devices"]]})
+        if path == "/managedDevices":
+            assert "Windows" in request.url.params["$filter"]
+            return httpx.Response(200, json={"value": list(self.devices.values())})
+        match = re.fullmatch(r"/managedDevices/([^/]+)", path)
+        if match and match.group(1) in self.devices:
+            assert request.url.params["$expand"] == "detectedApps"
+            device = dict(self.devices[match.group(1)])
+            device["detectedApps"] = [public(row) for row in self._detected(match.group(1))]
+            return httpx.Response(200, json=device)
+        return httpx.Response(404, json={"error": {"code": "NotFound", "message": path}})
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -79,6 +150,9 @@ class FakeIntune:
             return httpx.Response(201)
 
         assert request.headers["authorization"] == "Bearer test-token"
+        if request.url.path.startswith("/beta/deviceManagement/"):
+            self.calls.append((request.method, request.url.path.removeprefix("/beta")))
+            return self._inventory(request)
         path = request.url.path.removeprefix("/beta/deviceAppManagement/mobileApps")
         self.calls.append((request.method, path))
         body = json.loads(request.content) if request.content else {}

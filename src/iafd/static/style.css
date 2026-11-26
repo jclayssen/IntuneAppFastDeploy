@@ -149,6 +149,18 @@ ol.steps { margin: 0 0 12px; padding-left: 20px; }
 ol.steps li.current { font-weight: 600; }
 .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 16px; }
 .empty { text-align: center; padding: 30px 10px; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+button.tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  padding: 5px 10px;
+}
+button.tab:hover { color: var(--text); }
+button.tab.current { color: var(--text); border-color: var(--line); background: var(--bg); }
+.pager { margin-top: 12px; }
+.row + .hint { margin: 8px 0 12px; }
 @media (max-width: 560px) {
   #user { display: none; }
   .topbar { gap: 8px; padding: 8px 12px; }

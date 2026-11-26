@@ -142,6 +142,39 @@ class Graph:
         result = self.request("GET", f"/groups/{group_id}", params={"$select": "displayName"})
         return result.get("displayName", "")
 
+    # ----------------------------------------------------------------- device inventory
+
+    def detected_apps(self) -> list[dict]:
+        """Every software entry Intune discovered on the devices (all platforms)."""
+        path = "/deviceManagement/detectedApps"
+        try:
+            # Large pages when the service accepts them: a tenant has thousands of rows.
+            return self.get_all(path, {"$top": "500"})
+        except GraphError as exc:
+            if exc.status != 400:
+                raise
+            return self.get_all(path)
+
+    def detected_app_devices(self, detected_id: str) -> list[dict]:
+        return self.get_all(f"/deviceManagement/detectedApps/{detected_id}/managedDevices")
+
+    def managed_devices(self) -> list[dict]:
+        return self.get_all(
+            "/deviceManagement/managedDevices",
+            {
+                "$filter": "operatingSystem eq 'Windows'",
+                "$select": "id,deviceName,userPrincipalName,osVersion,lastSyncDateTime,"
+                "manufacturer,model",
+            },
+        )
+
+    def device_with_apps(self, device_id: str) -> dict:
+        return self.request(
+            "GET",
+            f"/deviceManagement/managedDevices/{device_id}",
+            params={"$expand": "detectedApps"},
+        )
+
     # ----------------------------------------------------------------- content upload
 
     def _wait_file(self, file_url: str, wanted: str) -> dict:
