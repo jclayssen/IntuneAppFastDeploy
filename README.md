@@ -10,6 +10,7 @@ You paste the link of the new installer, the tool downloads it, reads what it ca
 
 ## Contents
 
+- [A quick look](#a-quick-look)
 - [What it does](#what-it-does)
 - [What you need](#what-you-need)
 - [Step 1 — Create the app registration in Microsoft Entra ID](#step-1--create-the-app-registration-in-microsoft-entra-id)
@@ -25,6 +26,47 @@ You paste the link of the new installer, the tool downloads it, reads what it ca
 - [Limits](#limits)
 - [Development](#development)
 - [Adding a language](#adding-a-language)
+
+## A quick look
+
+These screens come from the built-in demo, which runs against a simulated Intune with sample applications.
+
+**The list of your Win32 applications**, with their version and status. *Update* starts from here.
+
+<img src="docs/screenshots/en/02-applications.png" alt="List of Win32 applications with version, publisher, status and an Update button" width="780">
+
+**1. Give the link** of the new installer, or choose a file.
+
+<img src="docs/screenshots/en/04-link.png" alt="Update screen with a field for the download link and a file picker" width="780">
+
+**2. Check before publishing.** Name, version, commands and detection rule are pre-filled from the application that is already in Intune; you choose the update method and who gets the new version first.
+
+<img src="docs/screenshots/en/05-review.png" alt="Review screen showing what was detected in the file, the application settings, the detection rule and the update method" width="780">
+
+**3. Published.**
+
+<img src="docs/screenshots/en/06-published.png" alt="Confirmation that the new version was created in Intune and replaces the previous one" width="780">
+
+**Pilot, then production.** The new version is assigned to the pilot groups only; *Go to production* adds the production groups.
+
+<img src="docs/screenshots/en/07-pilot.png" alt="Application page in its pilot phase, with pilot and production groups and a Go to production button" width="780">
+
+<details>
+<summary>More screens: sign-in, an application in production, a new application</summary>
+
+**Sign-in** with your own Intune administrator account.
+
+<img src="docs/screenshots/en/01-sign-in.png" alt="Sign-in page with a Sign in with Microsoft button" width="780">
+
+**An application in production**, with its assignments and its pilot and production groups.
+
+<img src="docs/screenshots/en/03-application.png" alt="Application page showing version, commands, previous version, assignments and group settings" width="780">
+
+**A new application** from an EXE installer: you fill in the uninstall command and the detection rule once.
+
+<img src="docs/screenshots/en/08-new-application.png" alt="Review screen for a new application from an EXE installer" width="780">
+
+</details>
 
 ## What it does
 
@@ -340,6 +382,16 @@ Layout:
 | `src/iafd/graph.py`, `publish.py` | Microsoft Graph calls and the publishing workflows |
 | `src/iafd/auth.py`, `web.py`, `jobs.py`, `store.py` | Sign-in, HTTP API, background tasks, local configuration |
 | `src/iafd/static/`, `src/iafd/locales/` | Interface and its texts |
+
+Regenerate the README screenshots after an interface change (needs Node.js and Playwright; restart the demo before each language so it starts from the same data):
+
+```bash
+node docs/screenshots/make.js en
+```
+
+```bash
+node docs/screenshots/make.js fr
+```
 
 ### Microsoft Graph reference
 
