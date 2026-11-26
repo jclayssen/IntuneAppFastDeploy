@@ -2,7 +2,7 @@
 
 # Versions here are moved forward by Renovate pull requests; the image is also
 # rebuilt every week so the base system gets its security patches.
-FROM ghcr.io/astral-sh/uv:0.11.32 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.10 AS uv
 
 FROM python:3.13-slim AS build
 COPY --from=uv /uv /bin/uv
