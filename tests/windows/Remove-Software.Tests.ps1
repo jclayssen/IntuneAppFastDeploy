@@ -22,7 +22,7 @@ BeforeAll {
 
     # Renders the script through the real Python renderer and runs it like Intune does.
     function Invoke-Removal {
-        param([string]$Mode, [hashtable]$Config)
+        param([string]$Mode, [hashtable]$Config, [switch]$From32Bit)
         $script:Counter++
         $configPath = Join-Path $script:Work ("config-$($script:Counter).json")
         $scriptPath = Join-Path $script:Work ("script-$($script:Counter).ps1")
@@ -32,7 +32,10 @@ BeforeAll {
         # Windows PowerShell turns anything a native program writes to stderr into an
         # error record: keep going so the test can show it.
         $ErrorActionPreference = 'Continue'
-        $output = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath 2>&1
+        $shell = 'powershell.exe'
+        # The Intune agent is a 32-bit process: this is how it would start the script.
+        if ($From32Bit) { $shell = Join-Path $env:SystemRoot 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe' }
+        $output = & $shell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $scriptPath 2>&1
         return [pscustomobject]@{
             ExitCode = $LASTEXITCODE
             Output   = (@($output) -join "`n")
@@ -223,6 +226,22 @@ Describe 'Removal' {
         $result = Invoke-Removal -Mode Uninstall -Config @{ names = @('IAFD Late App'); command = '{UninstallString}'; settle_seconds = 40 }
         $result.ExitCode | Should -Be 0
         Test-Path $program.Key | Should -BeFalse
+    }
+
+    It 'restarts itself in 64-bit when started from a 32-bit process, as the Intune agent does' {
+        $program = New-FakeSoftware -Name 'IAFD Bitness App'
+        $log = Join-Path $env:TEMP 'IAFD-Remove-iafd-bitness-app.log'
+        $intuneLog = Join-Path $env:ProgramData 'Microsoft\IntuneManagementExtension\Logs\IAFD-Remove-iafd-bitness-app.log'
+        Remove-Item -LiteralPath $log, $intuneLog -Force -ErrorAction SilentlyContinue
+        $result = Invoke-Removal -Mode Uninstall -Config @{ names = @('IAFD Bitness App'); settle_seconds = 10 } -From32Bit
+        $result.ExitCode | Should -Be 0
+        $result.Output | Should -Match 'IAFD Bitness App 1.0: removed'
+        Test-Path $program.Key | Should -BeFalse
+        $written = @($log, $intuneLog) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        $written | Should -Not -BeNullOrEmpty
+        $lines = Get-Content -LiteralPath $written
+        ($lines -join "`n") | Should -Match '64-bit\]'
+        ($lines -join "`n") | Should -Not -Match '32-bit\]'
     }
 
     It 'does nothing and succeeds when the program is not installed' {

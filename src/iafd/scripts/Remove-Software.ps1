@@ -23,6 +23,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# The Intune agent starts commands from a 32-bit process. On 64-bit Windows, start
+# again in 64-bit PowerShell: some Windows commands (Store packages) only work there.
+if ($Mode -ne 'Library' -and $env:PROCESSOR_ARCHITEW6432 -and $PSCommandPath) {
+    $native = Join-Path $env:SystemRoot 'sysnative\WindowsPowerShell\v1.0\powershell.exe'
+    if (Test-Path -LiteralPath $native) {
+        & $native -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $PSCommandPath -Mode $Mode
+        exit $LASTEXITCODE
+    }
+}
+
 # Settings chosen in the tool, as base64-encoded JSON: data, never code.
 $ConfigBase64 = '@@CONFIG@@'
 $Config = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($ConfigBase64)) | ConvertFrom-Json
@@ -47,7 +57,8 @@ function Write-Log {
             }
             $script:LogFile = $candidate
         }
-        $line = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' [' + $Mode + '] ' + $Message
+        $bits = [System.IntPtr]::Size * 8
+        $line = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' [' + $Mode + ', ' + $bits + '-bit] ' + $Message
         Add-Content -LiteralPath $script:LogFile -Value $line -ErrorAction Stop
     }
     catch {
