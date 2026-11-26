@@ -16,7 +16,7 @@
   "action.add_group": "Ajouter",
   "action.remove": "Retirer",
   "setup.title": "Configuration nécessaire",
-  "setup.text": "TENANT_ID et CLIENT_ID ne sont pas renseignés. Créez l'inscription d'application dans Microsoft Entra ID comme décrit dans le README, mettez les deux valeurs dans compose.yaml, puis lancez : docker compose up -d",
+  "setup.text": "TENANT_ID et CLIENT_ID ne sont pas renseignés. Créez l'inscription d'application dans Microsoft Entra ID comme décrit dans le README, mettez les deux valeurs dans docker-compose.yml, puis lancez : docker compose up -d",
   "setup.redirect": "URI de redirection à déclarer :",
   "login.title": "Connexion",
   "login.text": "Connectez-vous avec votre compte administrateur Intune. L'outil agit avec vos propres droits et ne stocke aucun mot de passe.",
@@ -187,5 +187,5 @@
   "error.login_unreachable": "La connexion Microsoft est injoignable : vérifiez TENANT_ID, CLIENT_ID et l'accès Internet du serveur",
   "footer.test_version": "Version de test",
   "footer.test_version_hint": "Pas encore validé sur un vrai tenant Intune : essayez d'abord sur une application sans importance.",
-  "error.config_not_writable": "Le dossier config n'est pas accessible en écriture, les groupes pilote/production ne peuvent donc pas être enregistrés. Sous Linux, donnez-le à l'utilisateur indiqué dans compose.yaml : sudo chown -R 1000:1000 config"
+  "error.config_not_writable": "Le dossier config n'est pas accessible en écriture, les groupes pilote/production ne peuvent donc pas être enregistrés. Sous Linux, donnez-le à l'utilisateur indiqué dans docker-compose.yml : sudo chown -R 1000:1000 config"
 }

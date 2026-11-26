@@ -1,6 +1,6 @@
 # For development: build the image from this checkout instead of pulling it.
 #
-#   docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 services:
   app:

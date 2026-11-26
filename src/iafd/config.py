@@ -1,4 +1,4 @@
-"""Settings, read from environment variables (see ``compose.yaml``)."""
+"""Settings, read from environment variables (see ``docker-compose.yml``)."""
 
 from __future__ import annotations
 

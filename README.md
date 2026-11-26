@@ -66,27 +66,27 @@ This tells Microsoft that the tool exists in *your* tenant. It takes about five 
 
 No client secret is needed: the registration is a *public client* and each person signs in with their own account.
 
-**Optional — search groups by name.** By default you paste the Object ID of a group. To search groups by name instead, also add the delegated permission `GroupMember.Read.All`, grant admin consent again, and set `ENABLE_GROUP_PICKER: "true"` in `compose.yaml`.
+**Optional — search groups by name.** By default you paste the Object ID of a group. To search groups by name instead, also add the delegated permission `GroupMember.Read.All`, grant admin consent again, and set `ENABLE_GROUP_PICKER: "true"` in `docker-compose.yml`.
 
 ## Step 2 — Install on your PC
 
-One file is enough: `compose.yaml`. There is nothing to clone or build.
+One file is enough: `docker-compose.yml`. There is nothing to clone or build.
 
 1. Create an empty folder and download the file into it:
 
    ```bash
-   curl -O https://raw.githubusercontent.com/jclayssen/IntuneAppFastDeploy/main/compose.yaml
+   curl -O https://raw.githubusercontent.com/jclayssen/IntuneAppFastDeploy/main/docker-compose.yml
    ```
 
    On Windows PowerShell:
 
    ```powershell
-   Invoke-WebRequest -Uri https://raw.githubusercontent.com/jclayssen/IntuneAppFastDeploy/main/compose.yaml -OutFile compose.yaml
+   Invoke-WebRequest -Uri https://raw.githubusercontent.com/jclayssen/IntuneAppFastDeploy/main/docker-compose.yml -OutFile docker-compose.yml
    ```
 
    You can also open the file in your browser and save it, or copy its content.
 
-2. Open `compose.yaml` in a text editor and paste the two values from step 1 between the quotes:
+2. Open `docker-compose.yml` in a text editor and paste the two values from step 1 between the quotes:
 
    ```yaml
    TENANT_ID: "00000000-0000-0000-0000-000000000000"
@@ -99,7 +99,7 @@ One file is enough: `compose.yaml`. There is nothing to clone or build.
    mkdir config
    ```
 
-   If your user is not number 1000 (check with `id -u`), also change the line `user: "1000:1000"` in `compose.yaml`.
+   If your user is not number 1000 (check with `id -u`), also change the line `user: "1000:1000"` in `docker-compose.yml`.
 
 4. Start the tool:
 
@@ -109,9 +109,9 @@ One file is enough: `compose.yaml`. There is nothing to clone or build.
 
 5. Open <http://localhost:8080> and click **Sign in with Microsoft**.
 
-The `config` folder next to `compose.yaml` holds the pilot/production groups (`config/rollout.json`). It is a plain folder on your disk, not a Docker volume: back it up like any other file.
+The `config` folder next to `docker-compose.yml` holds the pilot/production groups (`config/rollout.json`). It is a plain folder on your disk, not a Docker volume: back it up like any other file.
 
-After changing a setting in `compose.yaml`, run `docker compose up -d` again. To stop the tool:
+After changing a setting in `docker-compose.yml`, run `docker compose up -d` again. To stop the tool:
 
 ```bash
 docker compose down
@@ -173,7 +173,7 @@ These settings follow the application from one version to the next. They are sto
 
 Away from `localhost`, Microsoft sign-in requires HTTPS. The `https` profile starts a small web server (Caddy) in front of the tool.
 
-1. In `compose.yaml`, set the address in the `app` service and the name and certificate in the `https` service:
+1. In `docker-compose.yml`, set the address in the `app` service and the name and certificate in the `https` service:
 
    ```yaml
    PUBLIC_URL: "https://intune-deploy.example.com"
@@ -189,7 +189,7 @@ Away from `localhost`, Microsoft sign-in requires HTTPS. The `https` profile sta
    | `TLS:` | Certificate | Requirements |
    |---|---|---|
    | `"internal"` | Self-signed, generated automatically | None. Browsers show a warning until you trust the certificate (see below). |
-   | `"/certs/cert.pem /certs/key.pem"` | Your own certificate | Put the certificate (with its chain) and the private key in a `certs` folder next to `compose.yaml`, under these names. |
+   | `"/certs/cert.pem /certs/key.pem"` | Your own certificate | Put the certificate (with its chain) and the private key in a `certs` folder next to `docker-compose.yml`, under these names. |
    | `"you@example.com"` | Let's Encrypt, renewed automatically | `SITE_ADDRESS` must be a public DNS name pointing to the server, and ports 80 and 443 must be reachable from the Internet. |
 
 2. In the Entra app registration (**Authentication → Mobile and desktop applications → Add URI**), add:
@@ -210,13 +210,13 @@ Away from `localhost`, Microsoft sign-in requires HTTPS. The `https` profile sta
 
 **Do not expose the tool to the Internet unless you have to.** It lets signed-in administrators push software to every device. Let's Encrypt needs the server to be reachable from the Internet; on an internal network prefer your own certificate or the self-signed one.
 
-No other file is needed: the configuration of the HTTPS front door is inside `compose.yaml`.
+No other file is needed: the configuration of the HTTPS front door is inside `docker-compose.yml`.
 
 ## Who can sign in
 
 Only accounts of your tenant can sign in, and Intune enforces each person's own rights. To restrict further, either:
 
-- set `ALLOWED_USERS: "first@example.com,second@example.com"` in `compose.yaml`, or
+- set `ALLOWED_USERS: "first@example.com,second@example.com"` in `docker-compose.yml`, or
 - in the Entra admin center, open **Enterprise applications → IntuneAppFastDeploy → Properties**, set **Assignment required?** to **Yes**, then add the allowed people under **Users and groups**.
 
 Sessions live in the memory of the container: restarting it signs everyone out.
@@ -244,7 +244,7 @@ What still needs a person: merging the pull requests, looking at one whose tests
 
 ## Settings reference
 
-All settings go in the `environment:` section of the `app` service in `compose.yaml`. Run `docker compose up -d` after a change.
+All settings go in the `environment:` section of the `app` service in `docker-compose.yml`. Run `docker compose up -d` after a change.
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -259,24 +259,24 @@ All settings go in the `environment:` section of the `app` service in `compose.y
 | `CLIENT_SECRET` | empty | Only for a registration of type *Web* with a secret. |
 | `AUTHORITY_HOST` / `GRAPH_URL` | Microsoft public cloud | For national clouds. Not tested. |
 
-Outside `environment:`, three other lines of `compose.yaml` can be adapted: `user:` (owner of the `config` folder on Linux), `ports:` (local port; if you change it, change `PUBLIC_URL` and the redirect URI too), and `SITE_ADDRESS` / `TLS` in the `https` service.
+Outside `environment:`, three other lines of `docker-compose.yml` can be adapted: `user:` (owner of the `config` folder on Linux), `ports:` (local port; if you change it, change `PUBLIC_URL` and the redirect URI too), and `SITE_ADDRESS` / `TLS` in the `https` service.
 
 ## Privacy and security
 
 - **No telemetry.** The tool contacts only Microsoft (sign-in, Microsoft Graph, the Azure storage Intune designates for the upload) and the download links you give it.
-- **Nothing about your tenant leaves your machine or is stored in this repository.** Your identifiers live in your own copy of `compose.yaml`, and your groups in your `config` folder.
+- **Nothing about your tenant leaves your machine or is stored in this repository.** Your identifiers live in your own copy of `docker-compose.yml`, and your groups in your `config` folder.
 - **No password or secret is stored.** Sign-in uses the authorization code flow with PKCE; tokens stay in memory.
 - **Delegated rights only.** Every action is done as the signed-in person and appears under their name in the Intune audit logs.
 - **Installers are downloaded by the server.** Anyone who can sign in can make the server fetch a URL, including internal ones: keep access limited to administrators.
 - The container runs as an unprivileged user with all Linux capabilities dropped.
 
-To report a security problem, please use the repository's **Security → Report a vulnerability** page rather than a public issue.
+To report a security problem, see the [security policy](SECURITY.md): use the repository's **Security → Report a vulnerability** page rather than a public issue.
 
 ## Troubleshooting
 
 | Message or symptom | Cause and fix |
 |---|---|
-| *Configuration needed* at startup | `TENANT_ID` or `CLIENT_ID` is empty in `compose.yaml`. Fill them in and run `docker compose up -d` again. |
+| *Configuration needed* at startup | `TENANT_ID` or `CLIENT_ID` is empty in `docker-compose.yml`. Fill them in and run `docker compose up -d` again. |
 | `AADSTS50011` (redirect URI mismatch) | The address in the browser and `PUBLIC_URL` must match a redirect URI of the registration exactly, including `http`/`https` and the port. |
 | `AADSTS7000218` (client secret required) | The redirect URI was added under the *Web* platform. Move it to **Mobile and desktop applications**, or set `CLIENT_SECRET`. |
 | `AADSTS65001` (consent required) | Admin consent was not granted (step 1, point 8). |
@@ -321,7 +321,7 @@ uv run ruff check . && uv run ruff format .
 Build and run the image from your checkout instead of the published one:
 
 ```bash
-docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 ```
 
 Run the interface against a simulated Intune, without sign-in (development only):

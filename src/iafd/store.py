@@ -1,6 +1,6 @@
 """Pilot / production groups per application, kept in a local JSON file.
 
-The file lives in the configuration folder mounted next to ``compose.yaml``
+The file lives in the configuration folder mounted next to ``docker-compose.yml``
 (``config/rollout.json``). Nothing is written to Intune or sent anywhere else.
 
 Shape::
