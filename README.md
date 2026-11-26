@@ -6,7 +6,7 @@ Publish and update Windows applications (MSI / EXE) in Microsoft Intune from a d
 
 You paste the link of the new installer, the tool downloads it, reads what it can from the file, pre-fills everything from the application that already exists in Intune, and you click **Publish**. Nothing is sent to Intune before you confirm.
 
-> **Project status: beta.** The packaging, the workflows and the interface are covered by automated tests, and the requests sent to Intune were checked against Microsoft's API documentation, but the tests run against a simulated Intune, not a real tenant. Do your first publication on an unimportant application and check the result in the Intune portal. If something fails, the **Download the .intunewin** button gives you a package you can upload by hand.
+> ⚠️ **Test version.** This tool has not yet been validated against a real Intune tenant: it is published for testing, not for production use. The packaging, the workflows and the interface are covered by automated tests, and the requests sent to Intune were checked against Microsoft's API documentation, but the tests run against a simulated Intune. Do your first publication on an unimportant application and check the result in the Intune portal. If something fails, the **Download the .intunewin** button gives you a package you can upload by hand, and an issue with the message shown is welcome.
 
 ## Contents
 

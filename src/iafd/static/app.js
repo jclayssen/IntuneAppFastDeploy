@@ -145,6 +145,8 @@ async function setLanguage(code) {
   }
   document.getElementById("language").value = code;
   document.getElementById("logout").textContent = t("action.sign_out");
+  document.getElementById("test-version").textContent = t("footer.test_version");
+  document.getElementById("test-version").title = t("footer.test_version_hint");
   document.getElementById("footer").textContent = t("footer.privacy", { version: config.version });
 }
 

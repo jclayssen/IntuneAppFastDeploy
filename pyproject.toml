@@ -1,7 +1,7 @@
 [project]
 name = "intune-app-fast-deploy"
 version = "0.1.0"
-description = "Publish and update MSI/EXE applications in Microsoft Intune from a download link"
+description = "Publish and update MSI/EXE applications in Microsoft Intune from a download link (test version)"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"

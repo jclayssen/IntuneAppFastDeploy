@@ -6,7 +6,7 @@ Publier et mettre à jour des applications Windows (MSI / EXE) dans Microsoft In
 
 Vous collez le lien du nouvel installeur, l'outil le télécharge, lit ce qu'il peut dans le fichier, pré-remplit tout à partir de l'application déjà présente dans Intune, et vous cliquez sur **Publier**. Rien n'est envoyé dans Intune avant votre validation.
 
-> **État du projet : bêta.** La création des paquets, les enchaînements et l'interface sont couverts par des tests automatiques, et les requêtes envoyées à Intune ont été vérifiées par rapport à la documentation de l'API Microsoft, mais les tests tournent face à un Intune simulé, pas un vrai tenant. Faites votre première publication sur une application sans importance et vérifiez le résultat dans le portail Intune. En cas d'échec, le bouton **Télécharger le .intunewin** vous donne un paquet à envoyer à la main.
+> ⚠️ **Version de test.** Cet outil n'a pas encore été validé sur un vrai tenant Intune : il est publié pour être testé, pas pour un usage en production. La création des paquets, les enchaînements et l'interface sont couverts par des tests automatiques, et les requêtes envoyées à Intune ont été vérifiées par rapport à la documentation de l'API Microsoft, mais les tests tournent face à un Intune simulé. Faites votre première publication sur une application sans importance et vérifiez le résultat dans le portail Intune. En cas d'échec, le bouton **Télécharger le .intunewin** vous donne un paquet à envoyer à la main, et un ticket avec le message affiché est le bienvenu.
 
 ## Sommaire
 

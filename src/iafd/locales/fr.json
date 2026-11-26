@@ -184,5 +184,7 @@
   "error.config_unreadable": "Le fichier config/rollout.json est illisible",
   "error.no_production_groups": "Aucun groupe de production n'est configuré et il n'y a pas de version précédente à reprendre",
   "error.no_pilot_groups": "Ajoutez au moins un groupe pilote, ou choisissez une autre affectation",
-  "error.login_unreachable": "La connexion Microsoft est injoignable : vérifiez TENANT_ID, CLIENT_ID et l'accès Internet du serveur"
+  "error.login_unreachable": "La connexion Microsoft est injoignable : vérifiez TENANT_ID, CLIENT_ID et l'accès Internet du serveur",
+  "footer.test_version": "Version de test",
+  "footer.test_version_hint": "Pas encore validé sur un vrai tenant Intune : essayez d'abord sur une application sans importance."
 }

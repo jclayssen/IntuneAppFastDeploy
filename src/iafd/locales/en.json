@@ -184,5 +184,7 @@
   "error.config_unreadable": "The file config/rollout.json cannot be read",
   "error.no_production_groups": "No production group is configured and there is no previous version to copy from",
   "error.no_pilot_groups": "Add at least one pilot group, or choose another assignment",
-  "error.login_unreachable": "Microsoft sign-in cannot be reached: check TENANT_ID, CLIENT_ID and the Internet access of the server"
+  "error.login_unreachable": "Microsoft sign-in cannot be reached: check TENANT_ID, CLIENT_ID and the Internet access of the server",
+  "footer.test_version": "Test version",
+  "footer.test_version_hint": "Not yet validated on a real Intune tenant: try it on an unimportant application first."
 }
