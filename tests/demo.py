@@ -171,6 +171,7 @@ def build():
         work_dir=root / "work",
         default_language="fr",
         enable_device_inventory=True,
+        enable_remediations=True,
     )
     app = create_app(
         settings,

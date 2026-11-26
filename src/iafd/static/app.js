@@ -1016,8 +1016,17 @@ async function showDevice(deviceId) {
       h("h2", {}, t("inventory.software_on", { count: apps.length })),
       apps.length
         ? table(
-            [t("apps.name"), t("apps.version"), t("apps.publisher")],
-            apps.map((app) => h("tr", {}, h("td", {}, button(app.name, () => showInventory("software", app.name), "linkish")), h("td", {}, app.version || "—"), h("td", {}, app.publisher || "—"))),
+            [t("apps.name"), t("apps.version"), t("apps.publisher"), ""],
+            apps.map((app) =>
+              h(
+                "tr",
+                {},
+                h("td", {}, button(app.name, () => showInventory("software", app.name), "linkish")),
+                h("td", {}, app.version || "—"),
+                h("td", {}, app.publisher || "—"),
+                h("td", { class: "actions" }, config.remediations && !app.protected ? button(t("removal.here"), () => showOnDemandForm(device, app), "small danger") : null),
+              ),
+            ),
           )
         : h("p", { class: "muted" }, t("inventory.no_software")),
     ),
@@ -1084,8 +1093,8 @@ async function showRemovals() {
           {},
           h("td", {}, button(rule.config.names.join(", "), () => showRemoval(rule.id), "linkish")),
           h("td", {}, t(`removal.kind_${rule.config.kind}`)),
-          h("td", {}, t(rule.permanent ? "removal.permanent" : "removal.once")),
-          h("td", {}, rule.targets.length ? rule.targets.map(targetLabel).join(", ") : t("removal.no_target")),
+          h("td", {}, t(rule.mechanism === "remediation" ? "removal.on_demand" : rule.permanent ? "removal.permanent" : "removal.once")),
+          h("td", {}, rule.mechanism === "remediation" ? rule.devices.map((device) => device.name).join(", ") : rule.targets.length ? rule.targets.map(targetLabel).join(", ") : t("removal.no_target")),
           h("td", {}, when(rule.created_at)),
         ),
       ),
@@ -1292,6 +1301,55 @@ function showRemovalForm(seed, rule = null) {
   preview();
 }
 
+// Removing one program from one device, now, through an Intune remediation script.
+function showOnDemandForm(device, app) {
+  drawNav("inventory");
+  const looksLikeStore = /^[A-Za-z0-9]+(\.[A-Za-z0-9]+)+$/.test(app.name);
+  const versions = select([["this", t("removal.this_version", { version: app.version || "—" })], ["any", t("removal.versions_any")]], app.version ? "this" : "any");
+  const kind = select([["machine", t("removal.kind_machine")], ["user", t("removal.kind_user")], ["store", t("removal.kind_store")]], looksLikeStore ? "store" : "machine");
+  const kindHint = h("p", { class: "hint" });
+  const command = input("", { class: "mono", placeholder: "{UninstallString} /S" });
+  const preset = select(COMMAND_PRESETS.map(([value, label]) => [value, label ? `${label} — ${value}` : t("removal.preset")]), "");
+  const commandBlock = h("div", {}, field(t("removal.command"), command, t("removal.command_hint")), field(t("removal.preset_label"), preset));
+  const confirm = input("", { autocomplete: "off", placeholder: app.name });
+  const message = h("div", {});
+  const drawKind = () => {
+    kindHint.textContent = t(`removal.kind_${kind.value}_hint`);
+    commandBlock.hidden = kind.value === "store";
+  };
+  kind.addEventListener("change", drawKind);
+  preset.addEventListener("change", () => {
+    if (preset.value) command.value = preset.value;
+  });
+  const start = async (event) => {
+    message.replaceChildren();
+    const config = {
+      names: [app.name],
+      kind: kind.value,
+      versions: versions.value === "this" && app.version ? { mode: "list", values: [app.version] } : { mode: "any" },
+      command: command.value,
+    };
+    try {
+      const result = await busy(event.target, () => api("POST", "/api/removals/ondemand", { config, device_id: device.id, confirm: confirm.value }));
+      showRemoval(result.rule.id);
+    } catch (error) {
+      message.replaceChildren(errorBox(error));
+    }
+  };
+  drawKind();
+  show(
+    h("div", { class: "head" }, h("h1", {}, t("removal.ondemand_title")), button(t("action.cancel"), () => showDevice(device.id), "ghost")),
+    h("div", { class: "notice" }, t("removal.warning")),
+    h(
+      "div",
+      { class: "panel" },
+      h("dl", { class: "facts" }, h("dt", {}, t("inventory.device")), h("dd", {}, device.name), h("dt", {}, t("removal.software")), h("dd", {}, app.name), h("dt", {}, t("apps.version")), h("dd", {}, app.version || "—")),
+    ),
+    h("div", { class: "panel" }, h("h2", {}, t("removal.how")), field(t("removal.versions_label"), versions), field(t("removal.kind"), kind), kindHint, commandBlock),
+    h("div", { class: "panel" }, h("h2", {}, t("removal.confirm_title")), h("p", { class: "muted" }, t("removal.ondemand_text")), field(t("removal.confirm_label_one"), confirm), message, h("div", { class: "row end" }, button(t("removal.ondemand_publish"), start, "danger"))),
+  );
+}
+
 async function showRemoval(ruleId) {
   drawNav("removals");
   show(h("p", { class: "muted" }, t("apps.loading")));
@@ -1303,6 +1361,7 @@ async function showRemoval(ruleId) {
     return;
   }
   const { rule, results } = detail;
+  const onDemand = rule.mechanism === "remediation";
   const message = h("div", {});
   const targets = stageEditor(t("removal.targets"), t("removal.targets_hint"), { targets: rule.targets }, { noIntent: true });
   const badge = (state) => h("span", { class: `badge ${state === "removed" ? "ok" : state === "failed" ? "failed" : ""}` }, t(`removal.state_${state}`));
@@ -1333,9 +1392,9 @@ async function showRemoval(ruleId) {
         h("p", { class: "muted" }, counts || t("removal.no_result")),
         results.rows.length
           ? table(
-              [t("inventory.device"), t("inventory.user"), t("apps.status"), t("removal.error"), t("inventory.last_sync")],
+              [t("inventory.device"), t("inventory.user"), t("apps.status"), t(onDemand ? "removal.output" : "removal.error"), t("inventory.last_sync")],
               results.rows.map((row) =>
-                h("tr", {}, h("td", {}, row.device), h("td", {}, row.user || "—"), h("td", {}, badge(row.state)), h("td", { class: "mono" }, row.error || "—"), h("td", {}, when(row.last_sync))),
+                h("tr", {}, h("td", {}, row.device), h("td", {}, row.user || "—"), h("td", {}, badge(row.state)), h("td", { class: "mono" }, (onDemand ? row.output : row.error) || "—"), h("td", {}, when(row.last_sync))),
               ),
             )
           : null,
@@ -1348,7 +1407,7 @@ async function showRemoval(ruleId) {
       { class: "head" },
       h("h1", {}, rule.config.names.join(", ")),
       button(t("action.back"), showRemovals, "ghost"),
-      button(t("removal.edit"), () => showRemovalForm({ names: rule.config.names, known: [] }, rule), "ghost"),
+      onDemand ? null : button(t("removal.edit"), () => showRemovalForm({ names: rule.config.names, known: [] }, rule), "ghost"),
       button(t("removal.finish"), finish, "danger"),
     ),
     message,
@@ -1361,7 +1420,7 @@ async function showRemoval(ruleId) {
         h("dt", {}, t("removal.versions")), h("dd", {}, describeVersions(rule.config.versions)),
         h("dt", {}, t("removal.kind")), h("dd", {}, t(`removal.kind_${rule.config.kind}`)),
         h("dt", {}, t("removal.command_short")), h("dd", { class: rule.config.command ? "mono" : "" }, rule.config.command || t("removal.command_auto")),
-        h("dt", {}, t("removal.duration")), h("dd", {}, t(rule.permanent ? "removal.permanent_long" : "removal.once_long")),
+        h("dt", {}, t("removal.duration")), h("dd", {}, t(onDemand ? "removal.on_demand_long" : rule.permanent ? "removal.permanent_long" : "removal.once_long")),
         h("dt", {}, t("removal.created")), h("dd", {}, `${when(rule.created_at)} — ${rule.created_by}`),
         h("dt", {}, t("removal.remaining")), h("dd", {}, t("removal.remaining_value", { count: detail.remaining })),
       ),
@@ -1371,9 +1430,9 @@ async function showRemoval(ruleId) {
       { class: "panel" },
       h("h2", {}, t("removal.results")),
       resultsBody,
-      h("p", {}, h("a", { href: detail.portal_url, target: "_blank", rel: "noopener noreferrer" }, t("removal.open_portal"))),
+      detail.portal_url ? h("p", {}, h("a", { href: detail.portal_url, target: "_blank", rel: "noopener noreferrer" }, t("removal.open_portal"))) : h("p", { class: "hint" }, t("removal.on_demand_hint")),
     ),
-    h("div", { class: "panel" }, h("h2", {}, t("removal.where")), targets.node, h("div", { class: "row end" }, button(t("removal.save_targets"), saveTargets, "ghost"))),
+    onDemand ? null : h("div", { class: "panel" }, h("h2", {}, t("removal.where")), targets.node, h("div", { class: "row end" }, button(t("removal.save_targets"), saveTargets, "ghost"))),
   );
 }
 

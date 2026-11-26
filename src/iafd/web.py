@@ -139,6 +139,7 @@ def create_app(
             "default_language": settings.default_language,
             "group_picker": settings.enable_group_picker,
             "device_inventory": settings.enable_device_inventory,
+            "remediations": settings.remediations,
             "max_download_mb": settings.max_download_mb,
             "redirect_uri": auth.redirect_uri,
             "config_writable": store.writable(),
@@ -368,9 +369,13 @@ def create_app(
             device = graph.device_with_apps(identifier(device_id))
         finally:
             graph.close()
+        extra = protected.load_extra(settings.config_dir)
+        apps = inventory.device_apps(device.get("detectedApps") or [])
         return {
             "device": inventory.summarize_device(device),
-            "apps": inventory.device_apps(device.get("detectedApps") or []),
+            "apps": [
+                {**app, "protected": protected.is_protected(app["name"], extra)} for app in apps
+            ],
         }
 
     # ------------------------------------------------------------------ removals
@@ -379,6 +384,13 @@ def create_app(
         rule = removals.get(identifier(rule_id))
         if rule is None:
             raise HTTPException(404, {"code": "error.removal_not_found", "detail": ""})
+        return rule
+
+    def editable_rule(rule_id: str) -> dict:
+        rule = removal_rule(rule_id)
+        if rule.get("mechanism") == "remediation":
+            # An on-demand removal has no targets and is started again from a device.
+            raise RemovalError("error.removal_not_editable")
         return rule
 
     def detected_groups(session: Session) -> list[dict]:
@@ -441,34 +453,61 @@ def create_app(
         jobs.run(job, work, final_state="done", busy_state="running")
         return job.public()
 
+    @app.post("/api/removals/ondemand")
+    def removals_on_demand(request: Request, body: dict = Body(...)) -> dict:  # noqa: B008
+        """Remove software from one device now (Intune remediation, run on demand)."""
+        session = inventory_session(request)
+        if not settings.remediations:
+            raise HTTPException(404, {"code": "error.remediations_disabled", "detail": ""})
+        raw = body.get("config") or {}
+        config = publish.check_removal(raw, settings.config_dir)
+        if str(body.get("confirm", "")).strip().casefold() != config["names"][0].casefold():
+            raise RemovalError("error.removal_confirm")
+        graph = make_graph(session)
+        try:
+            rule = publish.remove_on_device(
+                graph,
+                removals,
+                raw,
+                identifier(str(body.get("device_id", ""))),
+                session.login,
+                settings.config_dir,
+            )
+        finally:
+            graph.close()
+        return {"rule": rule}
+
     @app.get("/api/removals/{rule_id}")
     def removals_detail(request: Request, rule_id: str) -> dict:
         session = inventory_session(request)
         rule = removal_rule(rule_id)
+        on_demand = rule.get("mechanism") == "remediation"
         graph = make_graph(session)
         try:
-            results = {
-                "available": True,
-                **removal.status_rows(graph.device_statuses(rule["app_id"])),
-            }
+            if on_demand:
+                states = graph.health_script_states(rule["script_id"])
+                results = {"available": True, **removal.run_rows(states, rule.get("devices", []))}
+            else:
+                statuses = graph.device_statuses(rule["app_id"])
+                results = {"available": True, **removal.status_rows(statuses)}
         except GraphError as exc:
             # Intune may refuse this report: the rule still works, show where to look instead.
             results = {"available": False, "detail": f"{exc.code}: {exc.message}"}
         finally:
             graph.close()
         rows = removal.matching_installs(detected_groups(session), rule["config"])
+        portal = "https://intune.microsoft.com/#view/Microsoft_Intune_Apps/SettingsMenu/~/0/appId/"
         return {
             "rule": rule,
             "results": results,
             "remaining": sum(row["devices"] for row in rows),
-            "portal_url": "https://intune.microsoft.com/#view/Microsoft_Intune_Apps/SettingsMenu/~/0/appId/"
-            + rule["app_id"],
+            "portal_url": None if on_demand else portal + rule["app_id"],
         }
 
     @app.put("/api/removals/{rule_id}/targets")
     def removals_targets(request: Request, rule_id: str, body: dict = Body(...)) -> dict:  # noqa: B008
         session = inventory_session(request)
-        rule = removal_rule(rule_id)
+        rule = editable_rule(rule_id)
         graph = make_graph(session)
         try:
             return {"rule": publish.retarget_removal(graph, removals, rule, body.get("targets"))}
@@ -478,7 +517,7 @@ def create_app(
     @app.put("/api/removals/{rule_id}")
     def removals_update(request: Request, rule_id: str, body: dict = Body(...)) -> dict:  # noqa: B008
         session = inventory_session(request)
-        rule = removal_rule(rule_id)
+        rule = editable_rule(rule_id)
         raw = body.get("config") or {}
         config = publish.check_removal(raw, settings.config_dir)
         if str(body.get("confirm", "")).strip().casefold() != config["names"][0].casefold():

@@ -32,6 +32,9 @@ class FakeIntune:
         self.removal_results: dict[str, dict[str, str]] = {}  # app id -> device id -> state
         self.fail_statuses = False
         self.no_silent: set[str] = set()
+        self.health_scripts: dict[str, dict] = {}
+        self.health_runs: dict[str, dict[str, dict | None]] = {}
+        self.remediations_unlicensed = False
         self._ids = itertools.count(1)
 
     def add_app(self, **fields) -> dict:
@@ -101,6 +104,7 @@ class FakeIntune:
         Names listed in ``no_silent`` stand for an EXE without a silent
         uninstaller: they stay, unless the rule carries a command.
         """
+        self._run_remediations()
         for app_id in list(self.apps):
             config = self._removal_config(self.apps[app_id])
             for device_id, entry in self._removal_matches(app_id):
@@ -146,8 +150,106 @@ class FakeIntune:
             for entry, owners in sorted(rows.items())
         ]
 
+    # ----------------------------------------------------------------- remediation scripts
+
+    def _script_config(self, script: dict) -> dict:
+        text = base64.b64decode(script["remediationScriptContent"]).decode("utf-8-sig")
+        return json.loads(base64.b64decode(re.search(r"ConfigBase64 = '([^']+)'", text).group(1)))
+
+    def _health_scripts(self, request: httpx.Request, path: str) -> httpx.Response | None:
+        method = request.method
+        body = json.loads(request.content) if request.content else {}
+        if path == "/deviceHealthScripts" and method == "POST":
+            for field in ("displayName", "detectionScriptContent", "remediationScriptContent"):
+                assert body[field], field
+            assert "[string]$Mode = 'RemediationDetect'" in base64.b64decode(
+                body["detectionScriptContent"]
+            ).decode("utf-8-sig")
+            script_id = f"hs-{len(self.health_scripts) + 1}"
+            self.health_scripts[script_id] = {"id": script_id, **body}
+            self.health_runs[script_id] = {}
+            return httpx.Response(201, json=self.health_scripts[script_id])
+        match = re.fullmatch(r"/deviceHealthScripts/([^/]+)", path)
+        if match and method == "DELETE":
+            if self.health_scripts.pop(match.group(1), None) is None:
+                return httpx.Response(404, json={"error": {"code": "NotFound", "message": ""}})
+            self.health_runs.pop(match.group(1), None)
+            return httpx.Response(204)
+        match = re.fullmatch(r"/managedDevices/([^/]+)/initiateOnDemandProactiveRemediation", path)
+        if match and method == "POST":
+            if (
+                match.group(1) not in self.devices
+                or body["scriptPolicyId"] not in self.health_scripts
+            ):
+                return httpx.Response(404, json={"error": {"code": "NotFound", "message": ""}})
+            if self.remediations_unlicensed:
+                return httpx.Response(
+                    403, json={"error": {"code": "Forbidden", "message": "licence not confirmed"}}
+                )
+            self.health_runs[body["scriptPolicyId"]][match.group(1)] = None  # asked, not run yet
+            return httpx.Response(204)
+        match = re.fullmatch(r"/deviceHealthScripts/([^/]+)/deviceRunStates", path)
+        if match and method == "GET":
+            runs = self.health_runs.get(match.group(1), {})
+            return httpx.Response(
+                200,
+                json={
+                    "value": [
+                        {
+                            "id": f"{match.group(1)}:{device_id}",
+                            **state,
+                            "managedDevice": {
+                                "id": device_id,
+                                "deviceName": self.devices[device_id]["deviceName"],
+                            },
+                        }
+                        for device_id, state in runs.items()
+                        if state is not None
+                    ]
+                },
+            )
+        return None
+
+    def _run_remediations(self) -> None:
+        for script_id, runs in self.health_runs.items():
+            config = self._script_config(self.health_scripts[script_id])
+            names = {name.casefold() for name in config["names"]}
+            for device_id, state in list(runs.items()):
+                if state is not None:
+                    continue
+                found = [e for e in self.installed[device_id] if e[0].casefold() in names]
+                stamp = {"lastStateUpdateDateTime": "2026-11-26T09:45:00Z"}
+                if not found:
+                    runs[device_id] = {
+                        "detectionState": "success",
+                        "remediationState": "skipped",
+                        "preRemediationDetectionScriptOutput": "Not found",
+                        **stamp,
+                    }
+                elif any(e[0] in self.no_silent for e in found) and not config.get("command"):
+                    runs[device_id] = {
+                        "detectionState": "fail",
+                        "remediationState": "remediationFailed",
+                        "remediationScriptError": f"{found[0][0]} {found[0][1]}: no silent "
+                        "uninstall method, a command is needed",
+                        **stamp,
+                    }
+                else:
+                    self.installed[device_id] = [
+                        e for e in self.installed[device_id] if e not in found
+                    ]
+                    runs[device_id] = {
+                        "detectionState": "fail",
+                        "remediationState": "success",
+                        "postRemediationDetectionScriptOutput": "Not found",
+                        **stamp,
+                    }
+
     def _inventory(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path.removeprefix("/beta/deviceManagement")
+        handled = self._health_scripts(request, path)
+        if handled is not None:
+            return handled
         assert request.method == "GET", "the inventory is read-only"
         public = lambda row: {k: v for k, v in row.items() if not k.startswith("_")}  # noqa: E731
         if path == "/detectedApps":
@@ -174,9 +276,9 @@ class FakeIntune:
             return httpx.Response(200, json={"value": list(self.devices.values())})
         match = re.fullmatch(r"/managedDevices/([^/]+)", path)
         if match and match.group(1) in self.devices:
-            assert request.url.params["$expand"] == "detectedApps"
             device = dict(self.devices[match.group(1)])
-            device["detectedApps"] = [public(row) for row in self._detected(match.group(1))]
+            if request.url.params.get("$expand") == "detectedApps":
+                device["detectedApps"] = [public(row) for row in self._detected(match.group(1))]
             return httpx.Response(200, json=device)
         return httpx.Response(404, json={"error": {"code": "NotFound", "message": path}})
 

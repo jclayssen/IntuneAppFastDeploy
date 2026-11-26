@@ -352,6 +352,91 @@ def status_rows(statuses: list[dict]) -> dict:
     return {"rows": rows, "counts": counts}
 
 
+# --------------------------------------------------------------------------- on one device
+
+ON_DEMAND_PREFIX = "Removal on demand - "
+
+
+def health_script_body(config: dict) -> dict:
+    """An Intune remediation: its detection finds the software, its remediation removes it.
+
+    It is never assigned: it only runs on the devices it is started on.
+    """
+    config = clean_config(config)
+    listed = ", ".join(config["names"])
+    return {
+        "@odata.type": "#microsoft.graph.deviceHealthScript",
+        "displayName": (ON_DEMAND_PREFIX + config["names"][0])[:200],
+        "description": (
+            f"Removes this software from a device, on demand: {listed}. "
+            "Created by IntuneAppFastDeploy; do not assign it."
+        )[:1000],
+        "publisher": "IntuneAppFastDeploy",
+        "runAsAccount": "user" if config["kind"] == "user" else "system",
+        "enforceSignatureCheck": False,
+        "runAs32Bit": False,
+        "roleScopeTagIds": ["0"],
+        "detectionScriptContent": encode_script(render_script(config, "RemediationDetect")),
+        "remediationScriptContent": encode_script(render_script(config, "Uninstall")),
+    }
+
+
+def run_state(state: dict) -> str:
+    """One word for what happened on a device (see the script's exit codes)."""
+    detection = state.get("detectionState", "unknown")
+    remediation = state.get("remediationState", "unknown")
+    if remediation == "success":
+        return "removed"
+    if remediation in ("remediationFailed", "scriptError") or detection == "scriptError":
+        return "failed"
+    if detection == "success":
+        return "absent"  # the detection found nothing to remove
+    return "pending"
+
+
+def run_rows(states: list[dict], devices: list[dict]) -> dict:
+    """Result of an on-demand removal on each device it was started on."""
+    by_device = {}
+    for state in states:
+        managed = state.get("managedDevice") or {}
+        by_device[managed.get("id") or state.get("id", "")] = state
+    rows = []
+    for device in devices:
+        state = by_device.get(device["id"])
+        if state is None:
+            rows.append(
+                {
+                    "device": device.get("name", ""),
+                    "user": device.get("user", ""),
+                    "state": "pending",
+                    "error": "",
+                    "output": "",
+                    "last_sync": "",
+                }
+            )
+            continue
+        output = (
+            state.get("remediationScriptError")
+            or state.get("postRemediationDetectionScriptOutput")
+            or state.get("preRemediationDetectionScriptOutput")
+            or ""
+        )
+        rows.append(
+            {
+                "device": device.get("name", ""),
+                "user": device.get("user", ""),
+                "state": run_state(state),
+                "error": "",
+                "output": str(output)[:500],
+                "last_sync": state.get("lastStateUpdateDateTime") or "",
+            }
+        )
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["state"]] = counts.get(row["state"], 0) + 1
+    return {"rows": rows, "counts": counts}
+
+
 def main(argv: list[str]) -> int:
     """``python -m iafd.removal <mode> <config.json> <out>`` - used by the Windows tests."""
     if len(argv) != 3:

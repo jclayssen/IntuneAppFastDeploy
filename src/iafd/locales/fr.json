@@ -315,5 +315,18 @@
   "replace.reinstall": "Désinstaller d'abord l'ancienne version, puis installer",
   "replace.upgrade_hint": "Rien d'autre ne change : le nouvel installeur fait la montée de version.",
   "replace.reinstall_hint": "Pour les logiciels qui ne se mettent pas à jour par-dessus. L'ancienne version est retirée silencieusement ; si cela échoue, la nouvelle n'est pas installée.",
-  "replace.command_hint": "Nécessaire seulement si l'ancienne version n'est ni un MSI ni un logiciel déclarant une désinstallation silencieuse. {UninstallString} désigne son désinstalleur."
+  "replace.command_hint": "Nécessaire seulement si l'ancienne version n'est ni un MSI ni un logiciel déclarant une désinstallation silencieuse. {UninstallString} désigne son désinstalleur.",
+  "error.remediations_disabled": "La désinstallation sur un seul poste n'est pas activée",
+  "error.removal_not_editable": "Une désinstallation à la demande ne se modifie pas : terminez-la et relancez-la depuis le poste",
+  "removal.here": "Désinstaller ici",
+  "removal.ondemand_title": "Désinstaller sur ce poste",
+  "removal.ondemand_text": "Intune lance la désinstallation sur ce poste uniquement, à son prochain contact (en général dans l'heure s'il est allumé). Les scripts de correction doivent avoir été activés une fois dans le portail Intune, avec la licence Windows confirmée.",
+  "removal.ondemand_publish": "Désinstaller sur ce poste",
+  "removal.this_version": "Cette version uniquement ({version})",
+  "removal.confirm_label_one": "Pour confirmer, retapez exactement le nom du logiciel",
+  "removal.on_demand": "À la demande",
+  "removal.on_demand_long": "À la demande, sur les postes listés ci-dessous",
+  "removal.on_demand_hint": "Pour la lancer sur un autre poste, ouvrez ce poste dans l'inventaire et choisissez « Désinstaller ici » avec les mêmes réglages.",
+  "removal.output": "Réponse du poste",
+  "removal.state_absent": "Non installé"
 }

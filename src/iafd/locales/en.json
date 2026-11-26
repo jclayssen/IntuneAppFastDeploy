@@ -315,5 +315,18 @@
   "replace.reinstall": "Remove the old version first, then install",
   "replace.upgrade_hint": "Nothing else changes: the new installer does the upgrade.",
   "replace.reinstall_hint": "For programs that do not upgrade over an existing version. The old version is removed silently; if that fails, the new one is not installed.",
-  "replace.command_hint": "Only needed when the old version is neither an MSI nor a program that declares a silent uninstall. {UninstallString} stands for its uninstaller."
+  "replace.command_hint": "Only needed when the old version is neither an MSI nor a program that declares a silent uninstall. {UninstallString} stands for its uninstaller.",
+  "error.remediations_disabled": "Removal on a single device is not enabled",
+  "error.removal_not_editable": "An on-demand removal cannot be changed: end it and start again from the device",
+  "removal.here": "Remove here",
+  "removal.ondemand_title": "Remove from this device",
+  "removal.ondemand_text": "Intune runs the removal on this device only, at its next check-in (usually within the hour when it is switched on). Remediations must have been enabled once in the Intune portal, with the Windows licence confirmed.",
+  "removal.ondemand_publish": "Remove from this device",
+  "removal.this_version": "This version only ({version})",
+  "removal.confirm_label_one": "To confirm, type the name of the software exactly",
+  "removal.on_demand": "On demand",
+  "removal.on_demand_long": "On demand, on the devices listed below",
+  "removal.on_demand_hint": "To run it on another device, open that device in the inventory and choose “Remove here” with the same settings.",
+  "removal.output": "What the device answered",
+  "removal.state_absent": "Not installed"
 }

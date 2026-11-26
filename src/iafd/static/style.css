@@ -93,6 +93,7 @@ button, a.btn {
 button.ghost, a.btn.ghost { background: transparent; color: var(--accent); }
 button.danger { border-color: var(--danger); background: transparent; color: var(--danger); }
 button.small { padding: 3px 9px; font-size: 13px; }
+button.small.danger { white-space: nowrap; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible {
   outline: 2px solid var(--accent);

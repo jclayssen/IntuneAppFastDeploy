@@ -280,9 +280,70 @@ def retarget_removal(graph: Graph, store: RemovalStore, rule: dict, targets: lis
     return store.save({**rule, "targets": wanted})
 
 
-def finish_removal(graph: Graph, store: RemovalStore, rule: dict) -> None:
-    """Stop a rule: no device is targeted any more and its Intune application is deleted."""
+def remove_on_device(
+    graph: Graph,
+    store: RemovalStore,
+    raw_config: dict,
+    device_id: str,
+    user: str,
+    config_dir: Path,
+) -> dict:
+    """Remove software from one device now, through an Intune remediation script.
+
+    The same settings started on another device reuse the same script.
+    """
+    config = check_removal(raw_config, config_dir)
+    device = graph.device(device_id)
+    entry = {
+        "id": device_id,
+        "name": device.get("deviceName") or device_id,
+        "user": device.get("userPrincipalName") or "",
+    }
+    rule = next(
+        (
+            existing
+            for existing in store.all()
+            if existing.get("mechanism") == "remediation" and existing["config"] == config
+        ),
+        None,
+    )
+    if rule is None:
+        script_id = graph.create_health_script(removal.health_script_body(config))["id"]
+        rule = {
+            "id": script_id,
+            "script_id": script_id,
+            "mechanism": "remediation",
+            "label": config["names"][0],
+            "config": config,
+            "targets": [],
+            "devices": [],
+            "permanent": False,
+            "created_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "created_by": user,
+        }
+        created = True
+    else:
+        created = False
     try:
+        graph.run_health_script(device_id, rule["script_id"])
+    except Exception:
+        if created:  # nothing ran: do not leave an unused script in Intune
+            try:
+                graph.delete_health_script(rule["script_id"])
+            except Exception:  # noqa: BLE001, S110 - the original error matters more
+                pass
+        raise
+    rule["devices"] = [d for d in rule["devices"] if d["id"] != device_id] + [entry]
+    return store.save(rule)
+
+
+def finish_removal(graph: Graph, store: RemovalStore, rule: dict) -> None:
+    """Stop a rule: no device is targeted any more and its Intune object is deleted."""
+    try:
+        if rule.get("mechanism") == "remediation":
+            graph.delete_health_script(rule["script_id"])
+            store.delete(rule["id"])
+            return
         graph.assign(rule["app_id"], [])
         graph.delete_app(rule["app_id"])
     except GraphError as exc:

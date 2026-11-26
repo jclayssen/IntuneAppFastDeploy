@@ -146,6 +146,35 @@ class Graph:
         """Per-device install state of an app (used for removal results)."""
         return self.get_all(f"/deviceAppManagement/mobileApps/{app_id}/deviceStatuses")
 
+    # ----------------------------------------------------------------- remediation scripts
+
+    def create_health_script(self, body: dict) -> dict:
+        return self.request("POST", "/deviceManagement/deviceHealthScripts", json=body)
+
+    def delete_health_script(self, script_id: str) -> None:
+        self.request("DELETE", f"/deviceManagement/deviceHealthScripts/{script_id}")
+
+    def run_health_script(self, device_id: str, script_id: str) -> None:
+        """Ask one device to run a remediation script at its next check-in."""
+        self.request(
+            "POST",
+            f"/deviceManagement/managedDevices/{device_id}/initiateOnDemandProactiveRemediation",
+            json={"scriptPolicyId": script_id},
+        )
+
+    def health_script_states(self, script_id: str) -> list[dict]:
+        return self.get_all(
+            f"/deviceManagement/deviceHealthScripts/{script_id}/deviceRunStates",
+            {"$expand": "managedDevice"},
+        )
+
+    def device(self, device_id: str) -> dict:
+        return self.request(
+            "GET",
+            f"/deviceManagement/managedDevices/{device_id}",
+            params={"$select": "id,deviceName,userPrincipalName"},
+        )
+
     # ----------------------------------------------------------------- device inventory
 
     def detected_apps(self) -> list[dict]:

@@ -302,6 +302,20 @@ A device only acts when it next checks in with Intune, and the inventory is refr
 
 On a device, the script writes `IAFD-Remove-<program>.log` in the Intune Management Extension log folder (`C:\ProgramData\Microsoft\IntuneManagementExtension\Logs`), which the portal's *Collect diagnostics* action retrieves.
 
+### On one device, on demand
+
+For an isolated case you can remove a program from a single device without creating a rule for a group. Open the device in **Device inventory → By device** and click **Remove here** next to the program.
+
+This uses another Intune mechanism, a *remediation* run on demand: the tool creates a remediation script that is never assigned, and asks Intune to run it on that device only. The device runs it at its next check-in, and the rule page then shows what the device answered. The same settings started on another device reuse the same script. Ending the rule deletes the script.
+
+It is a separate option because it needs more:
+
+1. In the Intune portal, **Devices → Scripts and remediations**: remediations must have been enabled once, which includes confirming the Windows licence (Windows Enterprise E3 or E5, included in Microsoft 365 E3, E5 and F3). Devices must be Microsoft Entra joined or hybrid joined.
+2. In the Entra app registration, add the delegated permissions `DeviceManagementScripts.ReadWrite.All` and `DeviceManagementManagedDevices.PrivilegedOperations.All`, then **Grant admin consent** again.
+3. In `docker-compose.yml`, set `ENABLE_REMEDIATIONS: "true"` (with `ENABLE_DEVICE_INVENTORY: "true"`), then run `docker compose up -d` and sign in again.
+
+The second permission lets the signed-in administrator start privileged actions on devices. Leave the option off if you only need removals by group.
+
 ### Guardrails
 
 - **Protected software**: the tool refuses to remove what would break device management, security or Windows (the Intune agent, Company Portal, Defender, Edge WebView2, Microsoft 365 Apps, Visual C++ and .NET runtimes, hardware drivers…). Add your own entries in `config/protected.txt`, one per line: an exact name, or `re:` followed by a regular expression.
@@ -425,6 +439,7 @@ All settings go in the `environment:` section of the `app` service in `docker-co
 | `DEFAULT_LANGUAGE` | `en` | Language used when the browser's language is not available. |
 | `ENABLE_GROUP_PICKER` | `false` | Search groups by name (needs `GroupMember.Read.All`). |
 | `ENABLE_DEVICE_INVENTORY` | `false` | Show the software found on the devices (needs `DeviceManagementManagedDevices.Read.All`). See [Device inventory](#device-inventory). |
+| `ENABLE_REMEDIATIONS` | `false` | Remove software from a single device on demand (needs the inventory option and two more permissions). See [On one device, on demand](#on-one-device-on-demand). |
 | `ALLOWED_USERS` | empty | Comma-separated sign-in names allowed to use the tool. Empty: anyone in the tenant. |
 | `MAX_DOWNLOAD_MB` | `8192` | Largest installer accepted. |
 | `SESSION_HOURS` | `12` | Hours before a new sign-in is required. |
@@ -528,7 +543,7 @@ node docs/screenshots/make.js fr
 
 ### Microsoft Graph reference
 
-The tool uses the beta endpoint of Microsoft Graph. Pages the code was checked against: [win32LobAppPowerShellScriptRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapppowershellscriptrule?view=graph-rest-beta), [mobileAppInstallStatus](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappinstallstatus?view=graph-rest-beta), [detectedApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-detectedapp?view=graph-rest-beta), [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta).
+The tool uses the beta endpoint of Microsoft Graph. Pages the code was checked against: [deviceHealthScript](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-devicehealthscript?view=graph-rest-beta), [initiateOnDemandProactiveRemediation](https://learn.microsoft.com/en-us/graph/api/intune-devices-manageddevice-initiateondemandproactiveremediation?view=graph-rest-beta), [win32LobAppPowerShellScriptRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapppowershellscriptrule?view=graph-rest-beta), [mobileAppInstallStatus](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappinstallstatus?view=graph-rest-beta), [detectedApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-detectedapp?view=graph-rest-beta), [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta).
 
 ## Adding a language
 

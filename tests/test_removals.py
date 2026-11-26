@@ -550,3 +550,157 @@ def test_a_package_can_hold_several_files(tmp_path):
     with pytest.raises(ValueError):
         intunewin.build_package(main, tmp_path / "pkg2", [tmp_path / "REPLACE-X.PS1"])
     assert zipfile.is_zipfile(tmp_path / "x.intunewin")
+
+
+# --------------------------------------------------------------------------- on one device
+
+
+def device_id(client, name):
+    devices = client.get("/api/inventory/devices", params={"q": name}).json()["items"]
+    return devices[0]["id"]
+
+
+def test_on_demand_removal_on_one_device(client):
+    intune = client.app.state.intune
+    assert client.get("/api/config").json()["remediations"] is True
+    target = device_id(client, "PC-COMPTA-03")
+    name = "Java 8 Update 201 (64-bit)"
+    refused = client.post(
+        "/api/removals/ondemand",
+        json={"config": {"names": [name]}, "device_id": target, "confirm": "java"},
+    )
+    assert refused.json()["error"]["code"] == "error.removal_confirm" and not intune.health_scripts
+
+    rule = client.post(
+        "/api/removals/ondemand",
+        json={"config": {"names": [name]}, "device_id": target, "confirm": name},
+    ).json()["rule"]
+    assert rule["mechanism"] == "remediation" and rule["devices"][0]["name"] == "PC-COMPTA-03"
+    script = intune.health_scripts[rule["id"]]
+    assert script["displayName"] == "Removal on demand - " + name
+    assert script["runAsAccount"] == "system" and script["runAs32Bit"] is False
+    assert intune.apps.keys() == {"app-1", "app-2", "app-3", "app-4", "app-5"}  # no application
+
+    detail = client.get(f"/api/removals/{rule['id']}").json()
+    assert detail["results"]["counts"] == {"pending": 1} and detail["portal_url"] is None
+
+    intune.sync()
+    detail = client.get(f"/api/removals/{rule['id']}").json()
+    assert detail["results"]["counts"] == {"removed": 1}
+    # Only that device: the other one that has Java keeps it.
+    assert ("Java 8 Update 201 (64-bit)", "8.0.2010.9", "Oracle Corporation") in intune.installed[
+        device_id(client, "PC-COMPTA-02")
+    ]
+
+    # The same settings on another device reuse the same script.
+    again = client.post(
+        "/api/removals/ondemand",
+        json={
+            "config": {"names": [name]},
+            "device_id": device_id(client, "PC-COMPTA-02"),
+            "confirm": name,
+        },
+    ).json()["rule"]
+    assert (
+        again["id"] == rule["id"] and len(again["devices"]) == 2 and len(intune.health_scripts) == 1
+    )
+
+    # It cannot be retargeted or changed, only ended.
+    assert (
+        client.put(f"/api/removals/{rule['id']}/targets", json={"targets": []}).json()["error"][
+            "code"
+        ]
+        == "error.removal_not_editable"
+    )
+    assert client.post(f"/api/removals/{rule['id']}/finish").json() == {"ok": True}
+    assert intune.health_scripts == {} and client.get("/api/removals").json()["rules"] == []
+
+
+def test_on_demand_reports_what_the_device_answered(client):
+    intune = client.app.state.intune
+    name = "WinRAR 5.91 (64-bit)"
+    rule = client.post(
+        "/api/removals/ondemand",
+        json={
+            "config": {"names": [name]},
+            "device_id": device_id(client, "PC-ATELIER-04"),
+            "confirm": name,
+        },
+    ).json()["rule"]
+    absent = client.post(
+        "/api/removals/ondemand",
+        json={
+            "config": {"names": [name]},
+            "device_id": device_id(client, "PC-IT-01"),
+            "confirm": name,
+        },
+    ).json()["rule"]
+    assert absent["id"] == rule["id"]
+    intune.sync()
+    rows = {
+        row["device"]: row
+        for row in client.get(f"/api/removals/{rule['id']}").json()["results"]["rows"]
+    }
+    assert rows["PC-ATELIER-04"]["state"] == "failed"
+    assert "no silent uninstall method" in rows["PC-ATELIER-04"]["output"]
+    assert rows["PC-IT-01"]["state"] == "absent"
+
+
+def test_on_demand_leaves_nothing_behind_when_intune_refuses(client):
+    intune = client.app.state.intune
+    intune.remediations_unlicensed = True
+    response = client.post(
+        "/api/removals/ondemand",
+        json={
+            "config": {"names": ["TeamViewer"]},
+            "device_id": device_id(client, "PC-IT-01"),
+            "confirm": "TeamViewer",
+        },
+    )
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "error.graph_forbidden"
+    assert intune.health_scripts == {} and client.get("/api/removals").json()["rules"] == []
+
+
+def test_on_demand_respects_the_protected_list_and_the_option(client, tmp_path):
+    from iafd.config import Settings
+    from iafd.web import create_app
+
+    from .demo import DemoAuth
+
+    refused = client.post(
+        "/api/removals/ondemand",
+        json={
+            "config": {"names": ["Microsoft Edge WebView2 Runtime"]},
+            "device_id": device_id(client, "PC-IT-01"),
+            "confirm": "Microsoft Edge WebView2 Runtime",
+        },
+    )
+    assert refused.json()["error"]["code"] == "error.removal_protected"
+    protected_flags = {
+        app["name"]: app["protected"]
+        for app in client.get(f"/api/inventory/devices/{device_id(client, 'PC-IT-01')}").json()[
+            "apps"
+        ]
+    }
+    assert protected_flags["Microsoft Edge WebView2 Runtime"] is True
+    assert protected_flags["TeamViewer"] is False
+
+    only_inventory = Settings(
+        tenant_id="t",
+        client_id="c",
+        config_dir=tmp_path,
+        work_dir=tmp_path / "w",
+        enable_device_inventory=True,
+    )
+    assert not any("Scripts" in scope for scope in only_inventory.scopes)
+    with_option = Settings(enable_device_inventory=True, enable_remediations=True)
+    assert [scope.rsplit("/", 1)[1] for scope in with_option.scopes[-2:]] == [
+        "DeviceManagementScripts.ReadWrite.All",
+        "DeviceManagementManagedDevices.PrivilegedOperations.All",
+    ]
+    # Without the inventory there is no device to pick: the option alone does nothing.
+    assert not Settings(enable_remediations=True).remediations
+    with TestClient(create_app(only_inventory, auth=DemoAuth())) as off:
+        off.headers["X-IAFD"] = "1"
+        assert off.get("/api/config").json()["remediations"] is False
