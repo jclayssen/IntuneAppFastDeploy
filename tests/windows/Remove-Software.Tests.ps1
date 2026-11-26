@@ -280,7 +280,7 @@ Describe 'Real software' {
         (Invoke-Removal -Mode Detect -Config @{ names = @($entry.DisplayName) }).Output | Should -BeNullOrEmpty
     }
 
-    It 'removes a program installed from an EXE, with the command given in the tool' {
+    It 'removes a program installed from an EXE' {
         if (Get-InstalledEntry -Like 'Notepad++*') { Set-ItResult -Skipped -Because 'Notepad++ is already installed'; return }
         $exe = Join-Path $script:Work 'npp.exe'
         Invoke-WebRequest -Uri 'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.6.9/npp.8.6.9.Installer.x64.exe' -OutFile $exe -UseBasicParsing
@@ -292,15 +292,15 @@ Describe 'Real software' {
         $program = Join-Path (Split-Path -Parent $entry.UninstallString.Trim('"')) 'notepad++.exe'
         Test-Path $program | Should -BeTrue
 
-        # This installer declares no silent command: the script must refuse to guess...
-        $refused = Invoke-Removal -Mode Uninstall -Config @{ names = @($entry.DisplayName); settle_seconds = 2 }
-        $refused.ExitCode | Should -Be 1
-        Get-InstalledEntry -Like 'Notepad++*' | Should -Not -BeNullOrEmpty
-
-        # ...and remove it once the command is given. Its uninstaller returns before it
-        # has finished, which is what the settle wait is for.
-        $result = Invoke-Removal -Mode Uninstall -Config @{ names = @($entry.DisplayName); command = '{UninstallString} /S' }
-        $result.ExitCode | Should -Be 0
+        # A single run, as on a device. This installer declares a silent uninstall command,
+        # which the script uses on its own; should a future version stop declaring one,
+        # the command an administrator would type in the tool is given instead.
+        $config = @{ names = @($entry.DisplayName) }
+        if (-not $entry.PSObject.Properties['QuietUninstallString']) { $config.command = '{UninstallString} /S' }
+        $result = Invoke-Removal -Mode Uninstall -Config $config
+        $result.ExitCode | Should -Be 0 -Because $result.Output
+        $result.Output | Should -Match 'removed'
+        # Its uninstaller returns before it has finished: the script waited for it.
         Get-InstalledEntry -Like 'Notepad++*' | Should -BeNullOrEmpty
         Test-Path $program | Should -BeFalse
     }
