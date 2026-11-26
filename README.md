@@ -18,6 +18,8 @@ You paste the link of the new installer, the tool downloads it, reads what it ca
 - [Step 3 — Use it](#step-3--use-it)
 - [Pilot and production groups](#pilot-and-production-groups)
 - [Device inventory](#device-inventory)
+- [Removing software from the devices](#removing-software-from-the-devices)
+- [Replacing an older version](#replacing-an-older-version)
 - [Running on a server with HTTPS](#running-on-a-server-with-https)
 - [Who can sign in](#who-can-sign-in)
 - [Keeping the tool up to date](#keeping-the-tool-up-to-date)
@@ -71,6 +73,14 @@ These screens come from the built-in demo, which runs against a simulated Intune
 
 <img src="docs/screenshots/en/08-new-application.png" alt="Review screen for a new application from an EXE installer" width="780">
 
+**Removing software**: the rule form, with the number of installations concerned and a typed confirmation.
+
+<img src="docs/screenshots/en/11-removal.png" alt="Form to remove software from the devices: names, versions, kind, command, targets and confirmation" width="780">
+
+**The result on each device.** Here the program has no silent uninstall: the devices report a failure until a command is added to the rule.
+
+<img src="docs/screenshots/en/12-removal-results.png" alt="Removal rule page with the result on each device and the error code reported by Intune" width="780">
+
 **One device** and the software found on it.
 
 <img src="docs/screenshots/en/10-device.png" alt="Page of a device with its user, model, Windows version and the software found on it" width="780">
@@ -88,6 +98,8 @@ These screens come from the built-in demo, which runs against a simulated Intune
 - **Creates the `.intunewin` on Linux**, without Microsoft's Windows-only tool.
 - **Works with any tenant**: nothing about a tenant is stored in this repository or in the image. Each organization uses its own app registration.
 - **Device inventory** (optional, read-only): the software found on your Windows devices, by software or by device, including what was not installed through Intune.
+- **Software removal** (optional): remove a program from the devices through Intune, including one Intune did not install, with the result on each device.
+- **Replacing older versions** (optional): publish a new version only for the devices that have an older one, removing the old one first when its installer cannot upgrade over it.
 - **English and French interface**, one file per language.
 
 ## What you need
@@ -251,6 +263,105 @@ Do the first step before the second: if the option is on while the permission ha
 - The tool keeps what it read for five minutes; **Reload** reads it again.
 - The same program can appear under several names when its name contains the version (for example *7-Zip 19.00* and *7-Zip 23.01*).
 
+## Removing software from the devices
+
+From the device inventory you can remove a program from the devices, including one that Intune did not install. It needs the [device inventory](#device-inventory) option and no other permission.
+
+### How it works
+
+Intune has no "uninstall this program" button for software it did not deploy. The tool uses the mechanism Intune does have: it creates a small Intune application, named *Removal - \<program\>*, whose content is a script and whose only job is to uninstall. It is assigned with the **Uninstall** intent, so Intune runs it only on the devices where the program is detected, then checks that it is gone.
+
+On each device the script looks for the program by its **exact name** and removes it silently:
+
+| Program | What happens |
+|---|---|
+| Installed from an MSI | Removed with its product code. Reliable. |
+| Declares a silent uninstall command | That command is used. |
+| Neither | The device reports a failure and nothing is run. You then add the vendor's silent command to the rule. |
+| Microsoft Store app | Removed for every user of the device. |
+
+The tool never tries switches at random. Some old programs have no silent uninstall at all: those cannot be removed automatically, by this tool or any other.
+
+### Creating a removal
+
+1. Open **Device inventory**, open the program, click **Remove this software**.
+2. Check the form:
+   - **Software**: the exact names. Add another name from the inventory when the same program appears under several names (often because the name contains the version).
+   - **Versions**: all, the ones you tick, or everything older than a version.
+   - **Kind**: installed for the whole device, in a user's profile, or a Store app. A program installed in a user's profile is removed in that user's session, so only while they are signed in.
+   - **Command**: leave empty to start. `{UninstallString}` stands for the uninstaller found on the device, for example `{UninstallString} /S`.
+   - **Targets**: groups, all devices or all users. Start with a small group.
+   - **Duration**: *one-off* (you end the rule when the program is gone) or *permanent* (it is removed again if it comes back).
+3. The form shows how many installations the inventory knows about. Type the name of the first program to confirm, then **Publish the removal**.
+
+### Following and ending a removal
+
+The **Removals** section lists the rules. A rule shows the result on each device — removed, waiting for the device, or failed with Intune's error code — and how many installations the inventory still reports. From there you can change the targets, change the rule (for instance to add a command after a failure), or **End the rule**: its Intune application is deleted and no device is targeted any more.
+
+A device only acts when it next checks in with Intune, and the inventory is refreshed about once a day: allow that long before concluding.
+
+On a device, the script writes `IAFD-Remove-<program>.log` in the Intune Management Extension log folder (`C:\ProgramData\Microsoft\IntuneManagementExtension\Logs`), which the portal's *Collect diagnostics* action retrieves.
+
+### On one device, on demand
+
+For an isolated case you can remove a program from a single device without creating a rule for a group. Open the device in **Device inventory → By device** and click **Remove here** next to the program.
+
+This uses another Intune mechanism, a *remediation* run on demand: the tool creates a remediation script that is never assigned, and asks Intune to run it on that device only. The device runs it at its next check-in, and the rule page then shows what the device answered. The same settings started on another device reuse the same script. Ending the rule deletes the script.
+
+It is a separate option because it needs more:
+
+1. In the Intune portal, **Devices → Scripts and remediations**: remediations must have been enabled once, which includes confirming the Windows licence (Windows Enterprise E3 or E5, included in Microsoft 365 E3, E5 and F3). Devices must be Microsoft Entra joined or hybrid joined.
+2. In the Entra app registration, add the delegated permissions `DeviceManagementScripts.ReadWrite.All` and `DeviceManagementManagedDevices.PrivilegedOperations.All`, then **Grant admin consent** again.
+3. In `docker-compose.yml`, set `ENABLE_REMEDIATIONS: "true"` (with `ENABLE_DEVICE_INVENTORY: "true"`), then run `docker compose up -d` and sign in again.
+
+The second permission lets the signed-in administrator start privileged actions on devices. Leave the option off if you only need removals by group.
+
+### Picking devices one by one
+
+A removal by group can also be aimed at devices you tick. On the page of a rule, **Devices picked one by one** lists the devices that have the software according to the inventory; tick some and click **Remove from the ticked devices**.
+
+Intune only targets groups, so the tool creates one security group per rule in Microsoft Entra ID, named *IntuneAppFastDeploy removal - \<program\>*, adds the ticked devices to it and assigns the removal to it. The group is deleted when the rule ends. Intune can take up to an hour to take a new member into account.
+
+It is a separate option because of what it needs: in the Entra app registration, add the delegated permissions `Group.ReadWrite.All` and `Device.Read.All`, grant admin consent again, then set `ENABLE_DEVICE_GROUPS: "true"` (with `ENABLE_DEVICE_INVENTORY: "true"`) in `docker-compose.yml`. `Group.ReadWrite.All` lets the signed-in administrator change any group of the tenant: leave the option off if targeting existing groups is enough, or use [removal on one device](#on-one-device-on-demand) for isolated cases.
+
+### Guardrails
+
+- **Protected software**: the tool refuses to remove what would break device management, security or Windows (the Intune agent, Company Portal, Defender, Edge WebView2, Microsoft 365 Apps, Visual C++ and .NET runtimes, hardware drivers…). Add your own entries in `config/protected.txt`, one per line: an exact name, or `re:` followed by a regular expression.
+- **Exact names only**: no wildcard, so a neighbouring program is never removed by mistake.
+- **Typed confirmation**, with the number of installations concerned.
+
+These checks are made by the server, not only by the interface.
+
+### Removing an application Intune installed
+
+On the page of an Intune application, **Remove from devices** assigns that application with the Uninstall intent to the targets you choose; Intune then uses the application's own uninstall command. **Stop removing** withdraws it.
+
+### What to know
+
+- **A removal cannot be undone.** To get the program back it has to be installed again.
+- Removal rules are stored in `config/removals.json`. Nothing is written in the Notes of your applications.
+- The script was tested on Windows with real installers, but not yet through a real Intune tenant: make your first removal on unimportant software and one or two devices.
+
+## Replacing an older version
+
+When a program is already on some devices — whether or not Intune installed it — you can publish a newer version for those devices only. It needs the [device inventory](#device-inventory) option.
+
+1. In **Device inventory**, open the program and click **Replace with a newer version**. (You can also tick the same option on the review screen of any publication.)
+2. Give the link of the new installer, as for any application.
+3. On the review screen, the block **Devices that already have an older version** is ticked, with the name from the inventory. Check:
+   - the **names**: exactly those of the inventory; add the other names of the same program if it has several;
+   - **Older than version**: by default the version you are publishing;
+   - **how the old version is replaced**:
+
+     | Choice | What happens on the device |
+     |---|---|
+     | The installer upgrades over it | The usual case. Nothing is added to the package. |
+     | Remove the old version first, then install | For programs that do not upgrade over an existing version. The package also carries the removal script: the old version is removed silently, then the installer runs. **If the old version cannot be removed, the new one is not installed.** |
+
+Either way, Intune only offers the application to the devices where an older version is found: you can assign it to *All devices* without installing it everywhere.
+
+With "remove first", the same rules as for a removal apply: MSI and programs declaring a silent uninstall are removed automatically, others need the vendor's command, and protected software is refused.
+
 ## Running on a server with HTTPS
 
 Away from `localhost`, Microsoft sign-in requires HTTPS. The `https` profile starts a small web server (Caddy) in front of the tool.
@@ -336,6 +447,8 @@ All settings go in the `environment:` section of the `app` service in `docker-co
 | `DEFAULT_LANGUAGE` | `en` | Language used when the browser's language is not available. |
 | `ENABLE_GROUP_PICKER` | `false` | Search groups by name (needs `GroupMember.Read.All`). |
 | `ENABLE_DEVICE_INVENTORY` | `false` | Show the software found on the devices (needs `DeviceManagementManagedDevices.Read.All`). See [Device inventory](#device-inventory). |
+| `ENABLE_REMEDIATIONS` | `false` | Remove software from a single device on demand (needs the inventory option and two more permissions). See [On one device, on demand](#on-one-device-on-demand). |
+| `ENABLE_DEVICE_GROUPS` | `false` | Aim a removal at devices picked one by one (needs the inventory option, `Group.ReadWrite.All` and `Device.Read.All`). See [Picking devices one by one](#picking-devices-one-by-one). |
 | `ALLOWED_USERS` | empty | Comma-separated sign-in names allowed to use the tool. Empty: anyone in the tenant. |
 | `MAX_DOWNLOAD_MB` | `8192` | Largest installer accepted. |
 | `SESSION_HOURS` | `12` | Hours before a new sign-in is required. |
@@ -380,7 +493,8 @@ docker compose logs -f app
 ## Limits
 
 - Windows Win32 applications only (not Microsoft Store, macOS or mobile apps).
-- One setup file per application. An installer that needs several files next to it must be wrapped into a single EXE or MSI first.
+- Software removal depends on each program having a silent uninstall; see [Removing software from the devices](#removing-software-from-the-devices).
+- One setup file per application (the tool adds its own scripts next to it when you choose to remove an older version first). An installer that needs several files next to it must be wrapped into a single EXE or MSI first.
 - The uninstall command and the detection rule of an EXE cannot be guessed from the file: you enter them once, then they are copied at each update.
 - Detection rules based on a script are copied as they are.
 - The oldest version is deleted from Intune when a third one is published (unless you untick the box).
@@ -422,6 +536,7 @@ Layout:
 | `src/iafd/appmodel.py` | Build the Microsoft Graph payloads (pure functions) |
 | `src/iafd/graph.py`, `publish.py` | Microsoft Graph calls and the publishing workflows |
 | `src/iafd/inventory.py` | Grouping, search and paging of the device inventory |
+| `src/iafd/removal.py`, `protected.py`, `scripts/Remove-Software.ps1` | Removal rules, the protected list and the script that runs on the devices |
 | `src/iafd/auth.py`, `web.py`, `jobs.py`, `store.py` | Sign-in, HTTP API, background tasks, local configuration |
 | `src/iafd/static/`, `src/iafd/locales/` | Interface and its texts |
 
@@ -437,7 +552,7 @@ node docs/screenshots/make.js fr
 
 ### Microsoft Graph reference
 
-The tool uses the beta endpoint of Microsoft Graph. Pages the code was checked against: [detectedApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-detectedapp?view=graph-rest-beta), [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta).
+The tool uses the beta endpoint of Microsoft Graph. Pages the code was checked against: [deviceHealthScript](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-devicehealthscript?view=graph-rest-beta), [initiateOnDemandProactiveRemediation](https://learn.microsoft.com/en-us/graph/api/intune-devices-manageddevice-initiateondemandproactiveremediation?view=graph-rest-beta), [win32LobAppPowerShellScriptRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapppowershellscriptrule?view=graph-rest-beta), [mobileAppInstallStatus](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappinstallstatus?view=graph-rest-beta), [detectedApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-detectedapp?view=graph-rest-beta), [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta).
 
 ## Adding a language
 

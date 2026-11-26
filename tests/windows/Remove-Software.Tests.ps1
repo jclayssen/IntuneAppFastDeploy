@@ -306,6 +306,69 @@ Describe 'Real software' {
     }
 }
 
+Describe 'Replacing an older version' {
+    BeforeAll {
+        # Builds a package folder like the one Intune unpacks on the device: the two
+        # scripts from the real renderer, and a stand-in for the new installer.
+        function Invoke-Replace {
+            param([hashtable]$Removal, [string]$InstallCommand)
+            $script:Counter++
+            $folder = Join-Path $script:Work ("package $($script:Counter)")
+            New-Item -ItemType Directory -Path $folder -Force | Out-Null
+            $configPath = Join-Path $script:Work ("replace-$($script:Counter).json")
+            @{ removal = $Removal; install_command = $InstallCommand } |
+                ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $configPath -Encoding UTF8
+            $wrapper = & $script:Python -m iafd.removal Package $configPath $folder
+            if ($LASTEXITCODE -ne 0) { throw "rendering failed with exit code $LASTEXITCODE" }
+            Set-Content -LiteralPath (Join-Path $folder 'install.cmd') -Encoding ASCII -Value @(
+                '@echo off',
+                'echo installed> "%~dp0installed.txt"',
+                'exit /b %1'
+            )
+            $ErrorActionPreference = 'Continue'
+            # Started from another folder on purpose: the wrapper must find its own files.
+            $output = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $folder ([string]$wrapper).Trim()) 2>&1
+            return [pscustomobject]@{
+                ExitCode  = $LASTEXITCODE
+                Output    = (@($output) -join "`n")
+                Installed = (Test-Path (Join-Path $folder 'installed.txt'))
+            }
+        }
+    }
+
+    It 'removes the old version, then runs the install command' {
+        $old = New-FakeSoftware -Name 'IAFD Replace App' -Version '1.0'
+        $result = Invoke-Replace -Removal @{ names = @('IAFD Replace App'); versions = @{ mode = 'below'; value = '2.0' }; settle_seconds = 10 } -InstallCommand 'install.cmd 0'
+        $result.ExitCode | Should -Be 0
+        $result.Installed | Should -BeTrue
+        Test-Path $old.Key | Should -BeFalse
+    }
+
+    It 'returns the exit code of the installer' {
+        New-FakeSoftware -Name 'IAFD Replace Code' -Version '1.0' | Out-Null
+        $result = Invoke-Replace -Removal @{ names = @('IAFD Replace Code'); versions = @{ mode = 'below'; value = '2.0' }; settle_seconds = 10 } -InstallCommand 'install.cmd 7'
+        $result.ExitCode | Should -Be 7
+        $result.Installed | Should -BeTrue
+    }
+
+    It 'does not install over an old version it could not remove' {
+        $old = New-FakeSoftware -Name 'IAFD Replace Stuck' -Version '1.0' -Behaviour plain
+        $result = Invoke-Replace -Removal @{ names = @('IAFD Replace Stuck'); versions = @{ mode = 'below'; value = '2.0' }; settle_seconds = 2 } -InstallCommand 'install.cmd 0'
+        $result.ExitCode | Should -Be 1
+        $result.Installed | Should -BeFalse
+        $result.Output | Should -Match 'not installed'
+        Test-Path $old.Key | Should -BeTrue
+    }
+
+    It 'leaves a newer version alone and still installs' {
+        $newer = New-FakeSoftware -Name 'IAFD Replace Newer' -Version '3.0'
+        $result = Invoke-Replace -Removal @{ names = @('IAFD Replace Newer'); versions = @{ mode = 'below'; value = '2.0' }; settle_seconds = 5 } -InstallCommand 'install.cmd 0'
+        $result.ExitCode | Should -Be 0
+        $result.Installed | Should -BeTrue
+        Test-Path $newer.Key | Should -BeTrue
+    }
+}
+
 Describe 'Store apps and helpers' {
     BeforeAll {
         # Load the functions without running anything, with Store settings.
@@ -366,8 +429,10 @@ Describe 'Store apps and helpers' {
 
 Describe 'Script quality' {
     It 'has no PSScriptAnalyzer error' {
-        $template = Join-Path $script:Repo 'src\iafd\scripts\Remove-Software.ps1'
-        $problems = @(Invoke-ScriptAnalyzer -Path $template -Severity Error)
+        $problems = @()
+        foreach ($name in @('Remove-Software.ps1', 'Replace-Software.ps1')) {
+            $problems += @(Invoke-ScriptAnalyzer -Path (Join-Path $script:Repo "src\iafd\scripts\$name") -Severity Error)
+        }
         ($problems | ForEach-Object { "$($_.Line): $($_.RuleName) $($_.Message)" }) -join "`n" | Should -BeNullOrEmpty
     }
 }

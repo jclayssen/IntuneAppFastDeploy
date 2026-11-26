@@ -204,7 +204,11 @@ function drawNav(current) {
   }
   const tab = (key, label, open) =>
     h("button", { type: "button", class: `tab ${section === key ? "current" : ""}`, "aria-current": section === key ? "page" : null, onclick: open }, label);
-  nav.replaceChildren(tab("apps", t("nav.apps"), showApps), tab("inventory", t("nav.inventory"), () => showInventory("software")));
+  nav.replaceChildren(
+    tab("apps", t("nav.apps"), showApps),
+    tab("inventory", t("nav.inventory"), () => showInventory("software")),
+    tab("removals", t("nav.removals"), showRemovals),
+  );
 }
 
 async function showApps() {
@@ -280,7 +284,7 @@ function targetLabel(target) {
   return target.name ? `${target.name} (${target.id})` : target.id;
 }
 
-function stageEditor(title, hint, stage) {
+function stageEditor(title, hint, stage, options = {}) {
   const state = { intent: stage?.intent || "required", targets: [...(stage?.targets || [])] };
   const chips = h("div", { class: "chips" });
   const message = h("div", {});
@@ -354,7 +358,7 @@ function stageEditor(title, hint, stage) {
     { class: "stage" },
     h("h3", {}, title),
     hint ? h("p", { class: "hint" }, hint) : null,
-    field(t("rollout.intent"), intent),
+    options.noIntent ? null : field(t("rollout.intent"), intent),
     chips,
     message,
     picker,
@@ -450,6 +454,44 @@ async function showApp(appId) {
             })
           : null,
       ),
+    ),
+    uninstallPanel(detail, appId),
+  );
+}
+
+// Removing an Intune-managed application from some devices: Intune itself does it,
+// through an "uninstall" assignment of the application.
+function uninstallPanel(detail, appId) {
+  const targets = stageEditor(t("removal.app_targets"), t("removal.app_targets_hint"), { targets: [] }, { noIntent: true });
+  const message = h("div", {});
+  const active = detail.assignments.some((item) => item.intent === "uninstall");
+  const send = async (list, control) => {
+    try {
+      await busy(control, () => api("POST", `/api/apps/${appId}/uninstall`, { targets: list }));
+      showApp(appId);
+    } catch (error) {
+      message.replaceChildren(errorBox(error));
+    }
+  };
+  return h(
+    "div",
+    { class: "panel" },
+    h("h2", {}, t("removal.app_title")),
+    h("p", { class: "muted" }, t("removal.app_text")),
+    targets.node,
+    message,
+    h(
+      "div",
+      { class: "row end" },
+      active ? button(t("removal.app_stop"), (event) => send([], event.target), "ghost") : null,
+      button(t("removal.app_start"), (event) => {
+        const list = targets.value().targets;
+        if (!list.length) {
+          message.replaceChildren(h("div", { class: "notice error" }, t("error.removal_no_target")));
+          return;
+        }
+        if (window.confirm(t("removal.app_confirm", { name: detail.app.name }))) send(list, event.target);
+      }, "danger"),
     ),
   );
 }
@@ -578,9 +620,74 @@ function detectionEditor(detection, analysis, isUpdate) {
   return { node: h("div", {}, field(t("detection.type"), type), body), value: () => ({ ...state }) };
 }
 
+// Set by "Replace with a newer version" in the inventory, read once by the review screen.
+let pendingReplace = null;
+
+// Optional block of the review screen: only install where an older version is found,
+// and if needed remove that older version first.
+function replaceEditor(seed, version) {
+  const state = { names: [...(seed?.names || [])] };
+  const enabled = h("input", { type: "checkbox", checked: !!seed });
+  const chips = h("div", { class: "chips" });
+  const found = h("div", { class: "results" });
+  const search = h("input", { type: "search", placeholder: t("removal.add_name") });
+  const below = input(version || "", { placeholder: "24.0" });
+  const mode = select([["upgrade", t("replace.upgrade")], ["reinstall", t("replace.reinstall")]], "upgrade");
+  const modeHint = h("p", { class: "hint" });
+  const command = input("", { class: "mono", placeholder: "{UninstallString} /S" });
+  const commandBlock = h("div", {}, field(t("removal.command"), command, t("replace.command_hint")));
+  const body = h("div", {});
+  const drawNames = () => {
+    chips.replaceChildren(
+      ...(state.names.length
+        ? state.names.map((name, index) => h("span", { class: "chip" }, name, h("button", { type: "button", "aria-label": t("action.remove"), onclick: () => { state.names.splice(index, 1); drawNames(); } }, "×")))
+        : [h("span", { class: "muted" }, t("replace.no_name"))]),
+    );
+  };
+  const draw = () => {
+    body.hidden = !enabled.checked;
+    modeHint.textContent = t(`replace.${mode.value}_hint`);
+    commandBlock.hidden = mode.value !== "reinstall";
+  };
+  let timer;
+  search.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      if (!search.value.trim()) {
+        found.replaceChildren();
+        return;
+      }
+      try {
+        const result = await api("GET", `/api/inventory/apps?q=${encodeURIComponent(search.value)}`);
+        const items = result.items.filter((item) => !state.names.some((name) => name.toLowerCase() === item.name.toLowerCase())).slice(0, 8);
+        const add = (item) => {
+          state.names.push(item.name);
+          search.value = "";
+          found.replaceChildren();
+          drawNames();
+        };
+        found.replaceChildren(...(items.length ? items.map((item) => button(item.name, () => add(item), "linkish")) : [h("span", { class: "muted" }, t("apps.no_match"))]));
+      } catch (error) {
+        found.replaceChildren(errorBox(error));
+      }
+    }, 300);
+  });
+  enabled.addEventListener("change", draw);
+  mode.addEventListener("change", draw);
+  body.append(h("p", { class: "muted" }, t("replace.hint")), chips, search, found, ...field(t("replace.below"), below).filter(Boolean), ...field(t("replace.mode"), mode).filter(Boolean), modeHint, commandBlock);
+  drawNames();
+  draw();
+  return {
+    node: h("div", { class: "panel" }, h("h2", {}, t("replace.title")), h("label", { class: "check" }, enabled, h("span", {}, t("replace.enable"))), body),
+    value: () => ({ enabled: enabled.checked, names: state.names, below: below.value.trim(), mode: mode.value, command: command.value }),
+  };
+}
+
 function showReview(job, appId) {
   const { analysis, form, existing, older, rollout } = job.result;
   const isUpdate = !!existing;
+  const replace = config.device_inventory ? replaceEditor(pendingReplace, form.version) : null;
+  pendingReplace = null;
   const controls = {
     display_name: input(form.display_name),
     version: input(form.version),
@@ -642,6 +749,7 @@ function showReview(job, appId) {
     message.replaceChildren();
     const body = { ...extra(), detection: detection.value() };
     for (const [key, control] of Object.entries(controls)) body[key] = control.value;
+    if (replace) body.replace = replace.value();
     if (body.rollout === "pilot" && !isUpdate && !body.pilot.targets.length) {
       message.replaceChildren(h("div", { class: "notice error" }, t("error.no_pilot_groups")));
       return;
@@ -694,6 +802,7 @@ function showReview(job, appId) {
     ),
     h("div", { class: "panel" }, h("h2", {}, t("detection.title")), h("p", { class: "muted" }, t("detection.text")), detection.node),
     options,
+    replace ? replace.node : null,
     message,
     h(
       "div",
@@ -842,7 +951,18 @@ function showSoftware(item, query) {
     }
   };
   show(
-    h("div", { class: "head" }, h("h1", {}, item.name), button(t("action.back"), () => showInventory("software", query), "ghost")),
+    h(
+      "div",
+      { class: "head" },
+      h("h1", {}, item.name),
+      button(t("action.back"), () => showInventory("software", query), "ghost"),
+      button(t("replace.start"), () => {
+        pendingReplace = { names: [item.name] };
+        showWizard(null);
+      }, "ghost"),
+      item.protected ? null : button(t("removal.start"), () => showRemovalForm({ names: [item.name], known: item.versions.map((entry) => entry.version) }), "danger"),
+    ),
+    item.protected ? h("div", { class: "notice" }, t("removal.protected_notice")) : null,
     h(
       "div",
       { class: "panel" },
@@ -896,11 +1016,479 @@ async function showDevice(deviceId) {
       h("h2", {}, t("inventory.software_on", { count: apps.length })),
       apps.length
         ? table(
-            [t("apps.name"), t("apps.version"), t("apps.publisher")],
-            apps.map((app) => h("tr", {}, h("td", {}, button(app.name, () => showInventory("software", app.name), "linkish")), h("td", {}, app.version || "—"), h("td", {}, app.publisher || "—"))),
+            [t("apps.name"), t("apps.version"), t("apps.publisher"), ""],
+            apps.map((app) =>
+              h(
+                "tr",
+                {},
+                h("td", {}, button(app.name, () => showInventory("software", app.name), "linkish")),
+                h("td", {}, app.version || "—"),
+                h("td", {}, app.publisher || "—"),
+                h("td", { class: "actions" }, config.remediations && !app.protected ? button(t("removal.here"), () => showOnDemandForm(device, app), "small danger") : null),
+              ),
+            ),
           )
         : h("p", { class: "muted" }, t("inventory.no_software")),
     ),
+  );
+}
+
+// ---------------------------------------------------------------- removals
+
+const COMMAND_PRESETS = [
+  ["", ""],
+  ["{UninstallString} /S", "NSIS"],
+  ["{UninstallString} /VERYSILENT /SUPPRESSMSGBOXES /NORESTART", "Inno Setup"],
+  ["{UninstallString} /quiet /norestart", "/quiet"],
+];
+
+// Runs a background task to its end, showing its steps.
+async function followTask(jobId, title, onDone, onBack) {
+  const head = h("div", { class: "head" }, h("h1", {}, title));
+  for (;;) {
+    let job;
+    try {
+      job = await api("GET", `/api/jobs/${jobId}`);
+    } catch (error) {
+      if (error.code !== "error.sign_in_required") show(errorBox(error), button(t("action.back"), onBack, "ghost"));
+      return;
+    }
+    if (job.state === "done") return onDone(job);
+    if (job.state === "error") {
+      show(head, errorBox(job.error), button(t("action.back"), onBack, "ghost"));
+      return;
+    }
+    show(head, progressPanel(job));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+}
+
+function describeVersions(rule) {
+  if (rule.mode === "list") return t("removal.versions_list_value", { versions: rule.values.join(", ") });
+  if (rule.mode === "below") return t("removal.versions_below_value", { version: rule.value });
+  return t("removal.versions_any");
+}
+
+async function showRemovals() {
+  drawNav("removals");
+  const body = h("div", { class: "panel" }, h("p", { class: "muted" }, t("apps.loading")));
+  show(h("div", { class: "head" }, h("h1", {}, t("removal.title"))), h("p", { class: "muted" }, t("removal.intro")), body);
+  let rules;
+  try {
+    rules = (await api("GET", "/api/removals")).rules;
+  } catch (error) {
+    body.replaceChildren(errorBox(error));
+    return;
+  }
+  if (!rules.length) {
+    body.replaceChildren(h("p", { class: "empty muted" }, t("removal.none")), h("div", { class: "row end" }, button(t("removal.open_inventory"), () => showInventory("software"))));
+    return;
+  }
+  body.replaceChildren(
+    table(
+      [t("removal.software"), t("removal.kind"), t("removal.duration"), t("removal.targets"), t("removal.created")],
+      rules.map((rule) =>
+        h(
+          "tr",
+          {},
+          h("td", {}, button(rule.config.names.join(", "), () => showRemoval(rule.id), "linkish")),
+          h("td", {}, t(`removal.kind_${rule.config.kind}`)),
+          h("td", {}, t(rule.mechanism === "remediation" ? "removal.on_demand" : rule.permanent ? "removal.permanent" : "removal.once")),
+          h("td", {}, rule.mechanism === "remediation" ? rule.devices.map((device) => device.name).join(", ") : rule.targets.length ? rule.targets.map(targetLabel).join(", ") : t("removal.no_target")),
+          h("td", {}, when(rule.created_at)),
+        ),
+      ),
+    ),
+  );
+}
+
+// The form used to create a removal rule, or to change what an existing one removes.
+function showRemovalForm(seed, rule = null) {
+  drawNav("removals");
+  const editing = !!rule;
+  const looksLikeStore = /^[A-Za-z0-9]+(\.[A-Za-z0-9]+)+$/.test(seed.names[0]);
+  const initial = rule ? rule.config : { names: seed.names, kind: looksLikeStore ? "store" : "machine", versions: { mode: "any" }, command: "" };
+  const state = { names: [...initial.names], known: [...(seed.known || [])], versions: JSON.parse(JSON.stringify(initial.versions)) };
+  const back = () => (editing ? showRemoval(rule.id) : showInventory("software", state.names[0]));
+
+  const chips = h("div", { class: "chips" });
+  const found = h("div", { class: "results" });
+  const search = h("input", { type: "search", placeholder: t("removal.add_name") });
+  const kind = select([["machine", t("removal.kind_machine")], ["user", t("removal.kind_user")], ["store", t("removal.kind_store")]], initial.kind);
+  const kindHint = h("p", { class: "hint" });
+  const versionMode = select([["any", t("removal.versions_any")], ["list", t("removal.versions_list")], ["below", t("removal.versions_below")]], state.versions.mode);
+  const versionBody = h("div", {});
+  const command = input(initial.command || "", { class: "mono", placeholder: "{UninstallString} /S" });
+  const preset = select(COMMAND_PRESETS.map(([value, label]) => [value, label ? `${label} — ${value}` : t("removal.preset")]), "");
+  const commandBlock = h("div", {}, field(t("removal.command"), command, t("removal.command_hint")), field(t("removal.preset_label"), preset));
+  const targets = stageEditor(t("removal.targets"), t("removal.targets_hint"), { targets: [] }, { noIntent: true });
+  const duration = select([["once", t("removal.once_long")], ["permanent", t("removal.permanent_long")]], "once");
+  const summary = h("div", {});
+  const confirm = input("", { autocomplete: "off" });
+  const message = h("div", {});
+  const publish = button(t(editing ? "removal.save" : "removal.publish"), null, "danger");
+
+  const config = () => {
+    const versions = { mode: versionMode.value };
+    if (versions.mode === "list") versions.values = state.versions.values || [];
+    if (versions.mode === "below") versions.value = state.versions.value || "";
+    return { names: state.names, kind: kind.value, versions, command: command.value };
+  };
+
+  let request = 0;
+  const preview = async () => {
+    const mine = ++request;
+    let result;
+    try {
+      result = await api("POST", "/api/removals/preview", { config: config() });
+    } catch (error) {
+      if (mine === request) summary.replaceChildren(errorBox(error));
+      return;
+    }
+    if (mine !== request) return;
+    confirm.placeholder = result.confirm;
+    publish.disabled = result.protected.length > 0;
+    summary.replaceChildren(
+      ...[
+        result.protected.length ? h("div", { class: "notice error" }, t("error.removal_protected"), " ", result.protected.join(", ")) : null,
+        h("div", { class: "notice" }, t("removal.preview", { count: result.installs })),
+        result.matches.length
+          ? table([t("removal.software"), t("apps.version"), t("inventory.devices")], result.matches.map((row) => h("tr", {}, h("td", {}, row.name), h("td", {}, row.version || "—"), h("td", {}, String(row.devices)))))
+          : null,
+      ].filter(Boolean),
+    );
+  };
+  let timer;
+  const changed = () => {
+    clearTimeout(timer);
+    timer = setTimeout(preview, 300);
+  };
+
+  const drawNames = () => {
+    chips.replaceChildren(
+      ...state.names.map((name, index) =>
+        h(
+          "span",
+          { class: "chip" },
+          name,
+          state.names.length > 1
+            ? h("button", { type: "button", "aria-label": t("action.remove"), onclick: () => { state.names.splice(index, 1); drawNames(); changed(); } }, "×")
+            : null,
+        ),
+      ),
+    );
+  };
+  const drawKind = () => {
+    kindHint.textContent = t(`removal.kind_${kind.value}_hint`);
+    commandBlock.hidden = kind.value === "store";
+  };
+  const drawVersions = () => {
+    const mode = versionMode.value;
+    if (mode === "list") {
+      const chosen = new Set(state.versions.values || []);
+      const text = input([...chosen].join(", "), {
+        placeholder: "1.2.3, 1.2.4",
+        oninput: (event) => {
+          state.versions.values = event.target.value.split(",").map((value) => value.trim()).filter(Boolean);
+          changed();
+        },
+      });
+      const boxes = state.known.filter(Boolean).map((version) =>
+        h(
+          "label",
+          { class: "check" },
+          h("input", {
+            type: "checkbox",
+            checked: chosen.has(version),
+            onchange: (event) => {
+              if (event.target.checked) chosen.add(version);
+              else chosen.delete(version);
+              state.versions.values = [...chosen];
+              text.value = [...chosen].join(", ");
+              changed();
+            },
+          }),
+          version,
+        ),
+      );
+      versionBody.replaceChildren(...boxes, ...field(t("removal.versions_list_label"), text).filter(Boolean));
+    } else if (mode === "below") {
+      const limit = input(state.versions.value || "", {
+        placeholder: "24.0",
+        oninput: (event) => {
+          state.versions.value = event.target.value.trim();
+          changed();
+        },
+      });
+      versionBody.replaceChildren(...field(t("removal.versions_below_label"), limit).filter(Boolean));
+    } else {
+      versionBody.replaceChildren();
+    }
+  };
+
+  let searchTimer;
+  search.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(async () => {
+      if (!search.value.trim()) {
+        found.replaceChildren();
+        return;
+      }
+      try {
+        const result = await api("GET", `/api/inventory/apps?q=${encodeURIComponent(search.value)}`);
+        const items = result.items.filter((item) => !item.protected && !state.names.some((name) => name.toLowerCase() === item.name.toLowerCase())).slice(0, 8);
+        const add = (item) => {
+          state.names.push(item.name);
+          for (const entry of item.versions) if (!state.known.includes(entry.version)) state.known.push(entry.version);
+          search.value = "";
+          found.replaceChildren();
+          drawNames();
+          drawVersions();
+          changed();
+        };
+        found.replaceChildren(...(items.length ? items.map((item) => button(item.name, () => add(item), "linkish")) : [h("span", { class: "muted" }, t("apps.no_match"))]));
+      } catch (error) {
+        found.replaceChildren(errorBox(error));
+      }
+    }, 300);
+  });
+  kind.addEventListener("change", () => {
+    drawKind();
+    changed();
+  });
+  versionMode.addEventListener("change", () => {
+    drawVersions();
+    changed();
+  });
+  command.addEventListener("input", changed);
+  preset.addEventListener("change", () => {
+    if (preset.value) command.value = preset.value;
+    changed();
+  });
+
+  publish.addEventListener("click", async () => {
+    message.replaceChildren();
+    const body = { config: config(), confirm: confirm.value };
+    if (!editing) {
+      body.targets = targets.value().targets;
+      body.permanent = duration.value === "permanent";
+    }
+    try {
+      const job = await busy(publish, () => api(editing ? "PUT" : "POST", editing ? `/api/removals/${rule.id}` : "/api/removals", body));
+      followTask(
+        job.id,
+        t("removal.progress"),
+        (done) => showRemoval(done.result.removal.id),
+        () => showRemovalForm({ names: state.names, known: state.known }, rule),
+      );
+    } catch (error) {
+      message.replaceChildren(errorBox(error));
+    }
+  });
+
+  drawNames();
+  drawKind();
+  drawVersions();
+  show(
+    h("div", { class: "head" }, h("h1", {}, t(editing ? "removal.edit_title" : "removal.new_title")), button(t("action.cancel"), back, "ghost")),
+    h("div", { class: "notice" }, t("removal.warning")),
+    h("div", { class: "panel" }, h("h2", {}, t("removal.software")), h("p", { class: "muted" }, t("removal.exact_hint")), chips, search, found),
+    h("div", { class: "panel" }, h("h2", {}, t("removal.versions")), field(t("removal.versions_label"), versionMode), versionBody),
+    h("div", { class: "panel" }, h("h2", {}, t("removal.how")), field(t("removal.kind"), kind), kindHint, commandBlock),
+    editing ? null : h("div", { class: "panel" }, h("h2", {}, t("removal.where")), targets.node, field(t("removal.duration"), duration)),
+    h("div", { class: "panel" }, h("h2", {}, t("removal.confirm_title")), summary, field(t("removal.confirm_label"), confirm), message, h("div", { class: "row end" }, publish)),
+  );
+  preview();
+}
+
+// Removing one program from one device, now, through an Intune remediation script.
+function showOnDemandForm(device, app) {
+  drawNav("inventory");
+  const looksLikeStore = /^[A-Za-z0-9]+(\.[A-Za-z0-9]+)+$/.test(app.name);
+  const versions = select([["this", t("removal.this_version", { version: app.version || "—" })], ["any", t("removal.versions_any")]], app.version ? "this" : "any");
+  const kind = select([["machine", t("removal.kind_machine")], ["user", t("removal.kind_user")], ["store", t("removal.kind_store")]], looksLikeStore ? "store" : "machine");
+  const kindHint = h("p", { class: "hint" });
+  const command = input("", { class: "mono", placeholder: "{UninstallString} /S" });
+  const preset = select(COMMAND_PRESETS.map(([value, label]) => [value, label ? `${label} — ${value}` : t("removal.preset")]), "");
+  const commandBlock = h("div", {}, field(t("removal.command"), command, t("removal.command_hint")), field(t("removal.preset_label"), preset));
+  const confirm = input("", { autocomplete: "off", placeholder: app.name });
+  const message = h("div", {});
+  const drawKind = () => {
+    kindHint.textContent = t(`removal.kind_${kind.value}_hint`);
+    commandBlock.hidden = kind.value === "store";
+  };
+  kind.addEventListener("change", drawKind);
+  preset.addEventListener("change", () => {
+    if (preset.value) command.value = preset.value;
+  });
+  const start = async (event) => {
+    message.replaceChildren();
+    const config = {
+      names: [app.name],
+      kind: kind.value,
+      versions: versions.value === "this" && app.version ? { mode: "list", values: [app.version] } : { mode: "any" },
+      command: command.value,
+    };
+    try {
+      const result = await busy(event.target, () => api("POST", "/api/removals/ondemand", { config, device_id: device.id, confirm: confirm.value }));
+      showRemoval(result.rule.id);
+    } catch (error) {
+      message.replaceChildren(errorBox(error));
+    }
+  };
+  drawKind();
+  show(
+    h("div", { class: "head" }, h("h1", {}, t("removal.ondemand_title")), button(t("action.cancel"), () => showDevice(device.id), "ghost")),
+    h("div", { class: "notice" }, t("removal.warning")),
+    h(
+      "div",
+      { class: "panel" },
+      h("dl", { class: "facts" }, h("dt", {}, t("inventory.device")), h("dd", {}, device.name), h("dt", {}, t("removal.software")), h("dd", {}, app.name), h("dt", {}, t("apps.version")), h("dd", {}, app.version || "—")),
+    ),
+    h("div", { class: "panel" }, h("h2", {}, t("removal.how")), field(t("removal.versions_label"), versions), field(t("removal.kind"), kind), kindHint, commandBlock),
+    h("div", { class: "panel" }, h("h2", {}, t("removal.confirm_title")), h("p", { class: "muted" }, t("removal.ondemand_text")), field(t("removal.confirm_label_one"), confirm), message, h("div", { class: "row end" }, button(t("removal.ondemand_publish"), start, "danger"))),
+  );
+}
+
+// Intune only targets groups: devices picked here go into an Entra group kept for the rule.
+function devicePicker(rule) {
+  const body = h("div", {});
+  const message = h("div", {});
+  const load = async (control) => {
+    let devices;
+    try {
+      devices = (await busy(control, () => api("GET", `/api/removals/${rule.id}/devices`))).devices;
+    } catch (error) {
+      message.replaceChildren(errorBox(error));
+      return;
+    }
+    if (!devices.length) {
+      body.replaceChildren(h("p", { class: "muted" }, t("removal.devices_none")));
+      return;
+    }
+    const boxes = new Map();
+    const rows = devices.map((device) => {
+      const box = h("input", { type: "checkbox", checked: device.chosen, disabled: device.chosen, "aria-label": device.name });
+      boxes.set(device.id, box);
+      return h("tr", {}, h("td", {}, box), h("td", {}, device.name), h("td", {}, device.user || "—"), h("td", {}, device.version || "—"), h("td", {}, when(device.last_sync)));
+    });
+    const pick = async (event) => {
+      message.replaceChildren();
+      const ids = devices.filter((device) => !device.chosen && boxes.get(device.id).checked).map((device) => device.id);
+      try {
+        const result = await busy(event.target, () => api("POST", `/api/removals/${rule.id}/devices`, { device_ids: ids }));
+        if (result.missing.length) {
+          message.replaceChildren(h("div", { class: "notice" }, t("removal.devices_missing", { names: result.missing.join(", ") })));
+          load(null);
+        } else {
+          showRemoval(rule.id);
+        }
+      } catch (error) {
+        message.replaceChildren(errorBox(error));
+      }
+    };
+    body.replaceChildren(
+      table(["", t("inventory.device"), t("inventory.user"), t("apps.version"), t("inventory.last_sync")], rows),
+      h("div", { class: "row end" }, button(t("removal.devices_pick"), pick, "danger")),
+    );
+  };
+  const chosen = rule.device_group ? rule.device_group.devices.map((device) => device.name).join(", ") : "";
+  body.append(h("div", { class: "row end" }, button(t("removal.devices_load"), (event) => load(event.target), "ghost")));
+  return h(
+    "div",
+    { class: "panel" },
+    h("h2", {}, t("removal.devices_title")),
+    h("p", { class: "muted" }, t("removal.devices_text")),
+    chosen ? h("p", {}, t("removal.devices_chosen", { names: chosen })) : null,
+    message,
+    body,
+  );
+}
+
+async function showRemoval(ruleId) {
+  drawNav("removals");
+  show(h("p", { class: "muted" }, t("apps.loading")));
+  let detail;
+  try {
+    detail = await api("GET", `/api/removals/${encodeURIComponent(ruleId)}`);
+  } catch (error) {
+    show(errorBox(error), button(t("action.back"), showRemovals, "ghost"));
+    return;
+  }
+  const { rule, results } = detail;
+  const onDemand = rule.mechanism === "remediation";
+  const message = h("div", {});
+  const targets = stageEditor(t("removal.targets"), t("removal.targets_hint"), { targets: rule.targets }, { noIntent: true });
+  const badge = (state) => h("span", { class: `badge ${state === "removed" ? "ok" : state === "failed" ? "failed" : ""}` }, t(`removal.state_${state}`));
+  const counts = results.available
+    ? Object.entries(results.counts)
+        .map(([state, count]) => `${t(`removal.state_${state}`)} : ${count}`)
+        .join(" · ")
+    : "";
+  const finish = async (event) => {
+    if (!window.confirm(t("removal.finish_confirm", { name: rule.label }))) return;
+    try {
+      await busy(event.target, () => api("POST", `/api/removals/${rule.id}/finish`));
+      showRemovals();
+    } catch (error) {
+      message.replaceChildren(errorBox(error));
+    }
+  };
+  const saveTargets = async (event) => {
+    try {
+      await busy(event.target, () => api("PUT", `/api/removals/${rule.id}/targets`, { targets: targets.value().targets }));
+      showRemoval(rule.id);
+    } catch (error) {
+      message.replaceChildren(errorBox(error));
+    }
+  };
+  const resultsBody = results.available
+    ? [
+        h("p", { class: "muted" }, counts || t("removal.no_result")),
+        results.rows.length
+          ? table(
+              [t("inventory.device"), t("inventory.user"), t("apps.status"), t(onDemand ? "removal.output" : "removal.error"), t("inventory.last_sync")],
+              results.rows.map((row) =>
+                h("tr", {}, h("td", {}, row.device), h("td", {}, row.user || "—"), h("td", {}, badge(row.state)), h("td", { class: "mono" }, (onDemand ? row.output : row.error) || "—"), h("td", {}, when(row.last_sync))),
+              ),
+            )
+          : null,
+        results.counts.failed ? h("p", { class: "hint" }, t("removal.failed_hint")) : null,
+      ]
+    : [h("div", { class: "notice" }, t("removal.results_unavailable"), " ", results.detail)];
+  show(
+    h(
+      "div",
+      { class: "head" },
+      h("h1", {}, rule.config.names.join(", ")),
+      button(t("action.back"), showRemovals, "ghost"),
+      onDemand ? null : button(t("removal.edit"), () => showRemovalForm({ names: rule.config.names, known: [] }, rule), "ghost"),
+      button(t("removal.finish"), finish, "danger"),
+    ),
+    message,
+    h(
+      "div",
+      { class: "panel" },
+      h(
+        "dl",
+        { class: "facts" },
+        h("dt", {}, t("removal.versions")), h("dd", {}, describeVersions(rule.config.versions)),
+        h("dt", {}, t("removal.kind")), h("dd", {}, t(`removal.kind_${rule.config.kind}`)),
+        h("dt", {}, t("removal.command_short")), h("dd", { class: rule.config.command ? "mono" : "" }, rule.config.command || t("removal.command_auto")),
+        h("dt", {}, t("removal.duration")), h("dd", {}, t(onDemand ? "removal.on_demand_long" : rule.permanent ? "removal.permanent_long" : "removal.once_long")),
+        h("dt", {}, t("removal.created")), h("dd", {}, `${when(rule.created_at)} — ${rule.created_by}`),
+        h("dt", {}, t("removal.remaining")), h("dd", {}, t("removal.remaining_value", { count: detail.remaining })),
+      ),
+    ),
+    h(
+      "div",
+      { class: "panel" },
+      h("h2", {}, t("removal.results")),
+      resultsBody,
+      detail.portal_url ? h("p", {}, h("a", { href: detail.portal_url, target: "_blank", rel: "noopener noreferrer" }, t("removal.open_portal"))) : h("p", { class: "hint" }, t("removal.on_demand_hint")),
+    ),
+    onDemand ? null : h("div", { class: "panel" }, h("h2", {}, t("removal.where")), targets.node, h("div", { class: "row end" }, button(t("removal.save_targets"), saveTargets, "ghost"))),
+    !onDemand && config.device_groups ? devicePicker(rule) : null,
   );
 }
 
@@ -946,8 +1534,10 @@ async function boot() {
     return showLogin("error.network");
   }
   document.getElementById("user").textContent = me.name;
+  document.getElementById("logout").title = `${me.name} (${me.login})`;
   document.getElementById("logout").hidden = false;
   if (section === "inventory" && config.device_inventory) showInventory("software");
+  else if (section === "removals" && config.device_inventory) showRemovals();
   else showApps();
 }
 

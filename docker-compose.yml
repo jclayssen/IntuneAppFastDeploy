@@ -32,6 +32,13 @@ services:
       # Device inventory: the software found on the devices.
       # true needs DeviceManagementManagedDevices.Read.All (README).
       ENABLE_DEVICE_INVENTORY: "false"
+      # Removal on a single device, on demand (needs the inventory above).
+      # true needs DeviceManagementScripts.ReadWrite.All and
+      # DeviceManagementManagedDevices.PrivilegedOperations.All (README).
+      ENABLE_REMEDIATIONS: "false"
+      # Aim a removal at devices picked one by one (needs the inventory above).
+      # true needs Group.ReadWrite.All and Device.Read.All (README).
+      ENABLE_DEVICE_GROUPS: "false"
       # ALLOWED_USERS: "first@example.com,second@example.com"
       # MAX_DOWNLOAD_MB: "8192"
       # SESSION_HOURS: "12"

@@ -6,6 +6,7 @@ proof that the real service accepts the same payloads.
 
 from __future__ import annotations
 
+import base64
 import itertools
 import json
 import re
@@ -28,6 +29,14 @@ class FakeIntune:
         self.fail_commit = False
         self.devices: dict[str, dict] = {}
         self.installed: dict[str, list[tuple[str, str, str]]] = {}  # device id -> software
+        self.removal_results: dict[str, dict[str, str]] = {}  # app id -> device id -> state
+        self.fail_statuses = False
+        self.no_silent: set[str] = set()
+        self.health_scripts: dict[str, dict] = {}
+        self.health_runs: dict[str, dict[str, dict | None]] = {}
+        self.remediations_unlicensed = False
+        self.groups: dict[str, dict] = {}  # group id -> {name, members: set of object ids}
+        self.unregistered: set[str] = set()  # device ids without an Entra object
         self._ids = itertools.count(1)
 
     def add_app(self, **fields) -> dict:
@@ -50,9 +59,11 @@ class FakeIntune:
 
     def add_device(self, name: str, user: str, software: list[tuple[str, str, str]]) -> dict:
         """A Windows device with (name, version, publisher) entries installed on it."""
-        device_id = f"dev-{len(self.devices) + 1}"
+        number = len(self.devices) + 1
+        device_id = f"dev-{number}"
         self.devices[device_id] = {
             "id": device_id,
+            "azureADDeviceId": f"aaaaaaaa-0000-0000-0000-{number:012d}",
             "deviceName": name,
             "userPrincipalName": user,
             "operatingSystem": "Windows",
@@ -63,6 +74,78 @@ class FakeIntune:
         }
         self.installed[device_id] = software
         return self.devices[device_id]
+
+    # ----------------------------------------------------------------- removals
+
+    def _removal_config(self, app: dict) -> dict | None:
+        """Settings embedded in the detection script of a removal application."""
+        for rule in app.get("rules", []):
+            if rule.get("@odata.type", "").endswith("PowerShellScriptRule"):
+                script = base64.b64decode(rule["scriptContent"]).decode("utf-8-sig")
+                match = re.search(r"\$ConfigBase64 = '([A-Za-z0-9+/=]+)'", script)
+                if match:
+                    return json.loads(base64.b64decode(match.group(1)))
+        return None
+
+    def _targeted(self, app_id: str) -> bool:
+        return any(a.get("intent") == "uninstall" for a in self.assignments.get(app_id, []))
+
+    def _removal_matches(self, app_id: str) -> list[tuple[str, tuple[str, str, str]]]:
+        config = self._removal_config(self.apps[app_id])
+        if not config or not self._targeted(app_id):
+            return []
+        names = {name.casefold() for name in config["names"]}
+        return [
+            (device_id, entry)
+            for device_id, software in self.installed.items()
+            if self._reached(app_id, device_id)
+            for entry in software
+            if entry[0].casefold() in names
+        ]
+
+    def _reached(self, app_id: str, device_id: str) -> bool:
+        """Is this device in one of the targets of the app's uninstall assignments?"""
+        for assignment in self.assignments.get(app_id, []):
+            if assignment.get("intent") != "uninstall":
+                continue
+            group = self.groups.get(assignment["target"].get("groupId", ""))
+            # "All devices", "all users" and groups the fake knows nothing about reach everyone.
+            if group is None or self._object_id(device_id) in group["members"]:
+                return True
+        return False
+
+    def sync(self) -> None:
+        """The devices check in: every targeted removal runs.
+
+        Names listed in ``no_silent`` stand for an EXE without a silent
+        uninstaller: they stay, unless the rule carries a command.
+        """
+        self._run_remediations()
+        for app_id in list(self.apps):
+            config = self._removal_config(self.apps[app_id])
+            for device_id, entry in self._removal_matches(app_id):
+                stubborn = entry[0] in self.no_silent and not config.get("command")
+                self.removal_results.setdefault(app_id, {})[device_id] = (
+                    "uninstallFailed" if stubborn else "notInstalled"
+                )
+                if not stubborn:
+                    self.installed[device_id] = [e for e in self.installed[device_id] if e != entry]
+
+    def _device_statuses(self, app_id: str) -> list[dict]:
+        results = dict(self.removal_results.get(app_id, {}))
+        for device_id, _ in self._removal_matches(app_id):
+            results.setdefault(device_id, "installed")  # targeted, has not checked in yet
+        return [
+            {
+                "id": f"{app_id}_{device_id}",
+                "deviceName": self.devices[device_id]["deviceName"],
+                "userPrincipalName": self.devices[device_id]["userPrincipalName"],
+                "installState": state,
+                "errorCode": -2016345060 if state == "uninstallFailed" else 0,
+                "lastSyncDateTime": "2026-11-26T09:30:00Z",
+            }
+            for device_id, state in sorted(results.items())
+        ]
 
     def _detected(self, device_id: str | None = None) -> list[dict]:
         rows: dict[tuple[str, str, str], list[str]] = {}
@@ -83,8 +166,152 @@ class FakeIntune:
             for entry, owners in sorted(rows.items())
         ]
 
+    # ----------------------------------------------------------------- Entra directory
+
+    def _object_id(self, device_id: str) -> str:
+        return "obj-" + device_id
+
+    def _directory(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path.removeprefix("/beta")
+        method = request.method
+        body = json.loads(request.content) if request.content else {}
+        if path == "/devices" and method == "GET":
+            wanted = re.fullmatch(r"deviceId eq '([0-9a-f-]{36})'", request.url.params["$filter"])
+            assert wanted, "only an exact, well-formed identifier may be searched"
+            found = [
+                {"id": self._object_id(device_id)}
+                for device_id, device in self.devices.items()
+                if device["azureADDeviceId"] == wanted.group(1)
+                and device_id not in self.unregistered
+            ]
+            return httpx.Response(200, json={"value": found})
+        if path == "/groups" and method == "POST":
+            assert body["securityEnabled"] is True and body["mailEnabled"] is False
+            assert re.fullmatch(r"[A-Za-z0-9-]{1,64}", body["mailNickname"])
+            group_id = f"44444444-4444-4444-4444-{len(self.groups) + 1:012d}"
+            self.groups[group_id] = {"name": body["displayName"], "members": set()}
+            return httpx.Response(201, json={"id": group_id, **body})
+        match = re.fullmatch(r"/groups/([^/]+)/members/\$ref", path)
+        if match and method == "POST" and match.group(1) in self.groups:
+            object_id = body["@odata.id"].rsplit("/", 1)[1]
+            members = self.groups[match.group(1)]["members"]
+            if object_id in members:
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": {
+                            "code": "Request_BadRequest",
+                            "message": "One or more added object references already exist",
+                        }
+                    },
+                )
+            members.add(object_id)
+            return httpx.Response(204)
+        match = re.fullmatch(r"/groups/([^/]+)", path)
+        if match and method == "DELETE" and self.groups.pop(match.group(1), None) is not None:
+            return httpx.Response(204)
+        return httpx.Response(404, json={"error": {"code": "NotFound", "message": path}})
+
+    # ----------------------------------------------------------------- remediation scripts
+
+    def _script_config(self, script: dict) -> dict:
+        text = base64.b64decode(script["remediationScriptContent"]).decode("utf-8-sig")
+        return json.loads(base64.b64decode(re.search(r"ConfigBase64 = '([^']+)'", text).group(1)))
+
+    def _health_scripts(self, request: httpx.Request, path: str) -> httpx.Response | None:
+        method = request.method
+        body = json.loads(request.content) if request.content else {}
+        if path == "/deviceHealthScripts" and method == "POST":
+            for field in ("displayName", "detectionScriptContent", "remediationScriptContent"):
+                assert body[field], field
+            assert "[string]$Mode = 'RemediationDetect'" in base64.b64decode(
+                body["detectionScriptContent"]
+            ).decode("utf-8-sig")
+            script_id = f"hs-{len(self.health_scripts) + 1}"
+            self.health_scripts[script_id] = {"id": script_id, **body}
+            self.health_runs[script_id] = {}
+            return httpx.Response(201, json=self.health_scripts[script_id])
+        match = re.fullmatch(r"/deviceHealthScripts/([^/]+)", path)
+        if match and method == "DELETE":
+            if self.health_scripts.pop(match.group(1), None) is None:
+                return httpx.Response(404, json={"error": {"code": "NotFound", "message": ""}})
+            self.health_runs.pop(match.group(1), None)
+            return httpx.Response(204)
+        match = re.fullmatch(r"/managedDevices/([^/]+)/initiateOnDemandProactiveRemediation", path)
+        if match and method == "POST":
+            if (
+                match.group(1) not in self.devices
+                or body["scriptPolicyId"] not in self.health_scripts
+            ):
+                return httpx.Response(404, json={"error": {"code": "NotFound", "message": ""}})
+            if self.remediations_unlicensed:
+                return httpx.Response(
+                    403, json={"error": {"code": "Forbidden", "message": "licence not confirmed"}}
+                )
+            self.health_runs[body["scriptPolicyId"]][match.group(1)] = None  # asked, not run yet
+            return httpx.Response(204)
+        match = re.fullmatch(r"/deviceHealthScripts/([^/]+)/deviceRunStates", path)
+        if match and method == "GET":
+            runs = self.health_runs.get(match.group(1), {})
+            return httpx.Response(
+                200,
+                json={
+                    "value": [
+                        {
+                            "id": f"{match.group(1)}:{device_id}",
+                            **state,
+                            "managedDevice": {
+                                "id": device_id,
+                                "deviceName": self.devices[device_id]["deviceName"],
+                            },
+                        }
+                        for device_id, state in runs.items()
+                        if state is not None
+                    ]
+                },
+            )
+        return None
+
+    def _run_remediations(self) -> None:
+        for script_id, runs in self.health_runs.items():
+            config = self._script_config(self.health_scripts[script_id])
+            names = {name.casefold() for name in config["names"]}
+            for device_id, state in list(runs.items()):
+                if state is not None:
+                    continue
+                found = [e for e in self.installed[device_id] if e[0].casefold() in names]
+                stamp = {"lastStateUpdateDateTime": "2026-11-26T09:45:00Z"}
+                if not found:
+                    runs[device_id] = {
+                        "detectionState": "success",
+                        "remediationState": "skipped",
+                        "preRemediationDetectionScriptOutput": "Not found",
+                        **stamp,
+                    }
+                elif any(e[0] in self.no_silent for e in found) and not config.get("command"):
+                    runs[device_id] = {
+                        "detectionState": "fail",
+                        "remediationState": "remediationFailed",
+                        "remediationScriptError": f"{found[0][0]} {found[0][1]}: no silent "
+                        "uninstall method, a command is needed",
+                        **stamp,
+                    }
+                else:
+                    self.installed[device_id] = [
+                        e for e in self.installed[device_id] if e not in found
+                    ]
+                    runs[device_id] = {
+                        "detectionState": "fail",
+                        "remediationState": "success",
+                        "postRemediationDetectionScriptOutput": "Not found",
+                        **stamp,
+                    }
+
     def _inventory(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path.removeprefix("/beta/deviceManagement")
+        handled = self._health_scripts(request, path)
+        if handled is not None:
+            return handled
         assert request.method == "GET", "the inventory is read-only"
         public = lambda row: {k: v for k, v in row.items() if not k.startswith("_")}  # noqa: E731
         if path == "/detectedApps":
@@ -111,9 +338,9 @@ class FakeIntune:
             return httpx.Response(200, json={"value": list(self.devices.values())})
         match = re.fullmatch(r"/managedDevices/([^/]+)", path)
         if match and match.group(1) in self.devices:
-            assert request.url.params["$expand"] == "detectedApps"
             device = dict(self.devices[match.group(1)])
-            device["detectedApps"] = [public(row) for row in self._detected(match.group(1))]
+            if request.url.params.get("$expand") == "detectedApps":
+                device["detectedApps"] = [public(row) for row in self._detected(match.group(1))]
             return httpx.Response(200, json=device)
         return httpx.Response(404, json={"error": {"code": "NotFound", "message": path}})
 
@@ -150,6 +377,9 @@ class FakeIntune:
             return httpx.Response(201)
 
         assert request.headers["authorization"] == "Bearer test-token"
+        if request.url.path.startswith(("/beta/groups", "/beta/devices")):
+            self.calls.append((request.method, request.url.path.removeprefix("/beta")))
+            return self._directory(request)
         if request.url.path.startswith("/beta/deviceManagement/"):
             self.calls.append((request.method, request.url.path.removeprefix("/beta")))
             return self._inventory(request)
@@ -186,6 +416,12 @@ class FakeIntune:
                 )
             del self.apps[app_id]
             return httpx.Response(204)
+        if rest == "/deviceStatuses":
+            if self.fail_statuses:
+                return httpx.Response(
+                    400, json={"error": {"code": "BadRequest", "message": "report not available"}}
+                )
+            return httpx.Response(200, json={"value": self._device_statuses(app_id)})
         if rest == "/assignments":
             return httpx.Response(200, json={"value": self.assignments[app_id]})
         if rest == "/assign":
@@ -233,6 +469,7 @@ class FakeIntune:
                 "fileDigest",
                 "fileDigestAlgorithm",
             }
+            self.encryption = body["fileEncryptionInfo"]
             self.files[app_id]["uploadState"] = (
                 "commitFileFailed" if self.fail_commit else "commitFileSuccess"
             )

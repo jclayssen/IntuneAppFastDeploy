@@ -12,7 +12,7 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFil
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, appmodel, intunewin, inventory, publish
+from . import __version__, appmodel, intunewin, inventory, protected, publish, removal
 from .analyze import analyze
 from .appmodel import FormError
 from .auth import COOKIE, Auth, AuthError, Session
@@ -21,7 +21,8 @@ from .download import DownloadError, adopt_upload, download
 from .graph import Graph, GraphError
 from .jobs import Job, JobManager, describe_error
 from .msi import MsiError
-from .store import RolloutStore, StoreError
+from .removal import RemovalError
+from .store import RemovalStore, RolloutStore, StoreError
 
 HERE = Path(__file__).parent
 STATIC = HERE / "static"
@@ -50,6 +51,7 @@ def create_app(
     settings = settings or Settings.from_env()
     auth = auth or Auth(settings)
     store = RolloutStore(settings.config_dir)
+    removals = RemovalStore(settings.config_dir)
     jobs = JobManager(settings.work_dir)
     app = FastAPI(title="IntuneAppFastDeploy", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -68,6 +70,12 @@ def create_app(
         if request.method not in ("GET", "HEAD") and request.headers.get(CSRF_HEADER) != "1":
             raise HTTPException(403, {"code": "error.csrf", "detail": ""})
         return session
+
+    def identifier(value: str) -> str:
+        try:
+            return inventory.safe_id(value)
+        except ValueError as exc:
+            raise HTTPException(400, {"code": str(exc), "detail": ""}) from exc
 
     def job_for(request: Request, job_id: str) -> tuple[Session, Job]:
         session = current(request)
@@ -92,7 +100,15 @@ def create_app(
             status = 502
         return JSONResponse({"error": error}, status_code=status)
 
-    for known in (FormError, StoreError, DownloadError, AuthError, GraphError, MsiError):
+    for known in (
+        FormError,
+        StoreError,
+        DownloadError,
+        AuthError,
+        GraphError,
+        MsiError,
+        RemovalError,
+    ):
         app.add_exception_handler(known, known_error)
 
     @app.middleware("http")
@@ -123,6 +139,8 @@ def create_app(
             "default_language": settings.default_language,
             "group_picker": settings.enable_group_picker,
             "device_inventory": settings.enable_device_inventory,
+            "remediations": settings.remediations,
+            "device_groups": settings.device_groups,
             "max_download_mb": settings.max_download_mb,
             "redirect_uri": auth.redirect_uri,
             "config_writable": store.writable(),
@@ -256,6 +274,18 @@ def create_app(
         finally:
             graph.close()
 
+    @app.post("/api/apps/{app_id}/uninstall")
+    def app_uninstall(request: Request, app_id: str, body: dict = Body(...)) -> dict:  # noqa: B008
+        """Remove an Intune-managed app from some targets (no target = stop removing)."""
+        graph = make_graph(current(request))
+        try:
+            targets = publish.removal_targets(body.get("targets"))
+            current_assignments = graph.assignments(identifier(app_id))
+            graph.assign(app_id, appmodel.with_uninstall(current_assignments, targets))
+            return app_detail(graph, app_id)
+        finally:
+            graph.close()
+
     @app.get("/api/groups")
     def groups(request: Request, q: str = "") -> dict:
         session = current(request)
@@ -289,12 +319,6 @@ def create_app(
             session.data[key] = entry
         return entry
 
-    def identifier(value: str) -> str:
-        try:
-            return inventory.safe_id(value)
-        except ValueError as exc:
-            raise HTTPException(400, {"code": str(exc), "detail": ""}) from exc
-
     @app.get("/api/inventory/apps")
     def inventory_apps(request: Request, q: str = "", page: int = 1, refresh: bool = False) -> dict:
         session = inventory_session(request)
@@ -302,7 +326,13 @@ def create_app(
             session, "detected", refresh, lambda g: inventory.group_apps(g.detected_apps())
         )
         found = inventory.search(entry["items"], q[:100], ("name", "publisher"))
-        return {**inventory.paginate(found, page), "fetched_at": entry["at"]}
+        result = inventory.paginate(found, page)
+        extra = protected.load_extra(settings.config_dir)
+        result["items"] = [
+            {**item, "protected": protected.is_protected(item["name"], extra)}
+            for item in result["items"]
+        ]
+        return {**result, "fetched_at": entry["at"]}
 
     @app.get("/api/inventory/apps/{detected_id}/devices")
     def inventory_app_devices(request: Request, detected_id: str) -> dict:
@@ -340,10 +370,249 @@ def create_app(
             device = graph.device_with_apps(identifier(device_id))
         finally:
             graph.close()
+        extra = protected.load_extra(settings.config_dir)
+        apps = inventory.device_apps(device.get("detectedApps") or [])
         return {
             "device": inventory.summarize_device(device),
-            "apps": inventory.device_apps(device.get("detectedApps") or []),
+            "apps": [
+                {**app, "protected": protected.is_protected(app["name"], extra)} for app in apps
+            ],
         }
+
+    # ------------------------------------------------------------------ removals
+
+    def removal_rule(rule_id: str) -> dict:
+        rule = removals.get(identifier(rule_id))
+        if rule is None:
+            raise HTTPException(404, {"code": "error.removal_not_found", "detail": ""})
+        return rule
+
+    def editable_rule(rule_id: str) -> dict:
+        rule = removal_rule(rule_id)
+        if rule.get("mechanism") == "remediation":
+            # An on-demand removal has no targets and is started again from a device.
+            raise RemovalError("error.removal_not_editable")
+        return rule
+
+    def detected_groups(session: Session) -> list[dict]:
+        return cached(
+            session, "detected", False, lambda g: inventory.group_apps(g.detected_apps())
+        )["items"]
+
+    def removal_preview(session: Session, raw: dict) -> dict:
+        config = removal.clean_config(raw)
+        rows = removal.matching_installs(detected_groups(session), config)
+        return {
+            "config": config,
+            "matches": rows,
+            "installs": sum(row["devices"] for row in rows),
+            "protected": protected.blocked(
+                config["names"], protected.load_extra(settings.config_dir)
+            ),
+            "confirm": config["names"][0],
+        }
+
+    @app.post("/api/removals/preview")
+    def removals_preview(request: Request, body: dict = Body(...)) -> dict:  # noqa: B008
+        return removal_preview(inventory_session(request), body.get("config") or {})
+
+    @app.get("/api/removals")
+    def removals_list(request: Request) -> dict:
+        inventory_session(request)
+        return {"rules": removals.all()}
+
+    @app.post("/api/removals")
+    def removals_create(request: Request, body: dict = Body(...)) -> dict:  # noqa: B008
+        session = inventory_session(request)
+        raw = body.get("config") or {}
+        # Validate everything before the job starts, so mistakes show at once.
+        config = publish.check_removal(raw, settings.config_dir)
+        targets = publish.removal_targets(body.get("targets"))
+        if str(body.get("confirm", "")).strip().casefold() != config["names"][0].casefold():
+            raise RemovalError("error.removal_confirm")
+        job = jobs.create(session.user_id)
+
+        def work(job: Job) -> None:
+            graph = make_graph(session)
+            try:
+                rule = publish.publish_removal(
+                    graph,
+                    removals,
+                    raw,
+                    targets,
+                    bool(body.get("permanent")),
+                    session.login,
+                    job.work_dir,
+                    settings.config_dir,
+                    job.set_step,
+                    job.set_progress,
+                )
+            finally:
+                graph.close()
+            job.result = {"removal": {"id": rule["id"], "label": rule["label"]}}
+
+        jobs.run(job, work, final_state="done", busy_state="running")
+        return job.public()
+
+    @app.post("/api/removals/ondemand")
+    def removals_on_demand(request: Request, body: dict = Body(...)) -> dict:  # noqa: B008
+        """Remove software from one device now (Intune remediation, run on demand)."""
+        session = inventory_session(request)
+        if not settings.remediations:
+            raise HTTPException(404, {"code": "error.remediations_disabled", "detail": ""})
+        raw = body.get("config") or {}
+        config = publish.check_removal(raw, settings.config_dir)
+        if str(body.get("confirm", "")).strip().casefold() != config["names"][0].casefold():
+            raise RemovalError("error.removal_confirm")
+        graph = make_graph(session)
+        try:
+            rule = publish.remove_on_device(
+                graph,
+                removals,
+                raw,
+                identifier(str(body.get("device_id", ""))),
+                session.login,
+                settings.config_dir,
+            )
+        finally:
+            graph.close()
+        return {"rule": rule}
+
+    @app.get("/api/removals/{rule_id}")
+    def removals_detail(request: Request, rule_id: str) -> dict:
+        session = inventory_session(request)
+        rule = removal_rule(rule_id)
+        on_demand = rule.get("mechanism") == "remediation"
+        graph = make_graph(session)
+        try:
+            if on_demand:
+                states = graph.health_script_states(rule["script_id"])
+                results = {"available": True, **removal.run_rows(states, rule.get("devices", []))}
+            else:
+                statuses = graph.device_statuses(rule["app_id"])
+                results = {"available": True, **removal.status_rows(statuses)}
+        except GraphError as exc:
+            # Intune may refuse this report: the rule still works, show where to look instead.
+            results = {"available": False, "detail": f"{exc.code}: {exc.message}"}
+        finally:
+            graph.close()
+        rows = removal.matching_installs(detected_groups(session), rule["config"])
+        portal = "https://intune.microsoft.com/#view/Microsoft_Intune_Apps/SettingsMenu/~/0/appId/"
+        return {
+            "rule": rule,
+            "results": results,
+            "remaining": sum(row["devices"] for row in rows),
+            "portal_url": None if on_demand else portal + rule["app_id"],
+        }
+
+    def rule_devices(session: Session, graph: Graph, rule: dict) -> dict[str, dict]:
+        """Managed devices that have the software of a rule, by managed device id."""
+        wanted = {name.casefold() for name in rule["config"]["names"]}
+        found: dict[str, dict] = {}
+        for group in detected_groups(session):
+            if group["name"].casefold() not in wanted:
+                continue
+            for entry in group["versions"]:
+                if not removal.version_wanted(rule["config"]["versions"], entry["version"]):
+                    continue
+                for device in graph.detected_app_devices(entry["id"]):
+                    found.setdefault(device["id"], {**device, "_version": entry["version"]})
+        return found
+
+    def device_groups_rule(request: Request, rule_id: str) -> tuple[Session, dict]:
+        session = inventory_session(request)
+        if not settings.device_groups:
+            raise HTTPException(404, {"code": "error.device_groups_disabled", "detail": ""})
+        return session, editable_rule(rule_id)
+
+    @app.get("/api/removals/{rule_id}/devices")
+    def removals_devices(request: Request, rule_id: str) -> dict:
+        """Devices that have the software, to pick the ones the removal should reach."""
+        session, rule = device_groups_rule(request, rule_id)
+        graph = make_graph(session)
+        try:
+            found = rule_devices(session, graph, rule)
+        finally:
+            graph.close()
+        chosen = {device["id"] for device in (rule.get("device_group") or {}).get("devices", [])}
+        rows = [
+            {
+                **inventory.summarize_device(device),
+                "version": device["_version"],
+                "chosen": device["id"] in chosen,
+            }
+            for device in found.values()
+        ]
+        return {"devices": sorted(rows, key=lambda row: row["name"].casefold())}
+
+    @app.post("/api/removals/{rule_id}/devices")
+    def removals_pick_devices(request: Request, rule_id: str, body: dict = Body(...)) -> dict:  # noqa: B008
+        session, rule = device_groups_rule(request, rule_id)
+        asked = {identifier(str(value)) for value in body.get("device_ids") or []}
+        if not asked:
+            raise RemovalError("error.removal_no_device")
+        graph = make_graph(session)
+        try:
+            # Only devices Intune itself reports as having the software can be picked.
+            found = rule_devices(session, graph, rule)
+            devices = [found[device_id] for device_id in asked if device_id in found]
+            if len(devices) != len(asked):
+                raise RemovalError("error.removal_unknown_device")
+            rule, missing = publish.target_devices(graph, removals, rule, devices)
+        finally:
+            graph.close()
+        return {"rule": rule, "missing": missing}
+
+    @app.put("/api/removals/{rule_id}/targets")
+    def removals_targets(request: Request, rule_id: str, body: dict = Body(...)) -> dict:  # noqa: B008
+        session = inventory_session(request)
+        rule = editable_rule(rule_id)
+        graph = make_graph(session)
+        try:
+            return {"rule": publish.retarget_removal(graph, removals, rule, body.get("targets"))}
+        finally:
+            graph.close()
+
+    @app.put("/api/removals/{rule_id}")
+    def removals_update(request: Request, rule_id: str, body: dict = Body(...)) -> dict:  # noqa: B008
+        session = inventory_session(request)
+        rule = editable_rule(rule_id)
+        raw = body.get("config") or {}
+        config = publish.check_removal(raw, settings.config_dir)
+        if str(body.get("confirm", "")).strip().casefold() != config["names"][0].casefold():
+            raise RemovalError("error.removal_confirm")
+        job = jobs.create(session.user_id)
+
+        def work(job: Job) -> None:
+            graph = make_graph(session)
+            try:
+                updated = publish.update_removal(
+                    graph,
+                    removals,
+                    rule,
+                    raw,
+                    job.work_dir,
+                    settings.config_dir,
+                    job.set_step,
+                    job.set_progress,
+                )
+            finally:
+                graph.close()
+            job.result = {"removal": {"id": updated["id"], "label": updated["label"]}}
+
+        jobs.run(job, work, final_state="done", busy_state="running")
+        return job.public()
+
+    @app.post("/api/removals/{rule_id}/finish")
+    def removals_finish(request: Request, rule_id: str) -> dict:
+        session = inventory_session(request)
+        rule = removal_rule(rule_id)
+        graph = make_graph(session)
+        try:
+            publish.finish_removal(graph, removals, rule)
+        finally:
+            graph.close()
+        return {"ok": True}
 
     # ------------------------------------------------------------------ jobs
 
@@ -445,6 +714,35 @@ def create_app(
             job.data["package"] = intunewin.build_package(job.data["path"], job.work_dir / "pkg")
         return job.data["package"]
 
+    def replacement(form: dict) -> dict | None:
+        """Settings of "remove the older version first", validated, or None."""
+        replace = removal.clean_replace(form.get("replace"), str(form.get("version") or ""))
+        if replace and replace["mode"] == "reinstall":
+            # The wrapper uninstalls software: the protected list applies.
+            publish.check_removal(replace["config"], settings.config_dir)
+            return replace
+        return None
+
+    def publish_package(job: Job, form: dict) -> intunewin.Package:
+        """The package to send: the installer alone, or with the scripts that
+        remove the older version before installing."""
+        replace = replacement(form)
+        if replace is None:
+            return ensure_package(job)
+        config = replace["config"]
+        folder = job.work_dir / "replace"
+        folder.mkdir(parents=True, exist_ok=True)
+        remove = folder / removal.script_file_name(config)
+        remove.write_text(removal.render_script(config, "Uninstall"), encoding="utf-8-sig")
+        wrapper = folder / removal.replace_script_name(config)
+        wrapper.write_text(
+            removal.render_replace_script(config, str(form.get("install_command") or "")),
+            encoding="utf-8-sig",
+        )
+        return intunewin.build_package(
+            wrapper, job.work_dir / "pkg-replace", [job.data["path"], remove]
+        )
+
     @app.get("/api/jobs/{job_id}/intunewin")
     def job_intunewin(request: Request, job_id: str) -> Response:
         _, job = job_for(request, job_id)
@@ -481,10 +779,11 @@ def create_app(
             appmodel.clone_app_body(existing, form, analysis)
         else:
             appmodel.inplace_patch(existing, form, analysis, "pending")
+        replacement(form)
 
         def work(job: Job) -> None:
             job.set_step("step.package")
-            package = ensure_package(job)
+            package = publish_package(job, form)
             graph = make_graph(session)
             try:
                 if mode == "new":

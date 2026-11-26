@@ -106,3 +106,23 @@ def test_the_template_avoids_syntax_newer_than_windows_powershell_5():
     code = "\n".join(line.split("#")[0] for line in template.splitlines())
     for newer in ("??", "?.", "-AsHashtable", " ? ", "&&", "||"):
         assert newer not in code, newer
+
+
+def test_command_line_entry_point_writes_a_replacement_package(tmp_path, capsys):
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps({"removal": {"names": ["Old App"]}, "install_command": "install.cmd 0"}), "utf-8"
+    )
+    assert removal.main(["Package", str(config), str(tmp_path / "pkg")]) == 0
+    assert capsys.readouterr().out.strip() == "Replace-old-app.ps1"
+    assert sorted(p.name for p in (tmp_path / "pkg").iterdir()) == [
+        "Remove-old-app.ps1",
+        "Replace-old-app.ps1",
+    ]
+
+
+def test_the_replacement_template_avoids_newer_syntax():
+    template = removal.REPLACE_TEMPLATE.read_text(encoding="utf-8")
+    code = "\n".join(line.split("#")[0] for line in template.splitlines())
+    for newer in ("??", "?.", " ? ", "&&", "||"):
+        assert newer not in code, newer

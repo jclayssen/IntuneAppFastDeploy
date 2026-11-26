@@ -18,6 +18,8 @@ Vous collez le lien du nouvel installeur, l'outil le télécharge, lit ce qu'il 
 - [Étape 3 — Utiliser](#étape-3--utiliser)
 - [Groupes pilote et production](#groupes-pilote-et-production)
 - [Inventaire des postes](#inventaire-des-postes)
+- [Désinstaller des logiciels des postes](#désinstaller-des-logiciels-des-postes)
+- [Remplacer une version antérieure](#remplacer-une-version-antérieure)
 - [Sur un serveur, en HTTPS](#sur-un-serveur-en-https)
 - [Qui peut se connecter](#qui-peut-se-connecter)
 - [Garder l'outil à jour](#garder-loutil-à-jour)
@@ -71,6 +73,14 @@ Ces écrans viennent de la démonstration intégrée, qui tourne face à un Intu
 
 <img src="docs/screenshots/fr/08-new-application.png" alt="Écran de vérification pour une nouvelle application à partir d'un installeur EXE" width="780">
 
+**Désinstaller un logiciel** : le formulaire de la règle, avec le nombre d'installations concernées et une confirmation par saisie.
+
+<img src="docs/screenshots/fr/11-removal.png" alt="Formulaire de désinstallation d'un logiciel des postes : noms, versions, type, commande, cibles et confirmation" width="780">
+
+**Le résultat sur chaque poste.** Ici le logiciel n'a pas de désinstallation silencieuse : les postes remontent un échec tant qu'une commande n'est pas ajoutée à la règle.
+
+<img src="docs/screenshots/fr/12-removal-results.png" alt="Page d'une règle de désinstallation avec le résultat par poste et le code d'erreur remonté par Intune" width="780">
+
 **Un poste** et les logiciels qui y ont été trouvés.
 
 <img src="docs/screenshots/fr/10-device.png" alt="Page d'un poste avec son utilisateur, son modèle, sa version de Windows et les logiciels trouvés" width="780">
@@ -88,6 +98,8 @@ Ces écrans viennent de la démonstration intégrée, qui tourne face à un Intu
 - **Crée le `.intunewin` sous Linux**, sans l'outil Microsoft réservé à Windows.
 - **Fonctionne avec n'importe quel tenant** : rien de propre à un tenant n'est stocké dans ce dépôt ni dans l'image. Chaque organisation utilise sa propre inscription d'application.
 - **Inventaire des postes** (facultatif, en lecture seule) : les logiciels trouvés sur vos postes Windows, par logiciel ou par poste, y compris ceux qui n'ont pas été installés par Intune.
+- **Désinstallation de logiciels** (facultatif) : retirer un logiciel des postes en passant par Intune, y compris un logiciel qu'Intune n'a pas installé, avec le résultat par poste.
+- **Remplacement d'anciennes versions** (facultatif) : publier une nouvelle version uniquement pour les postes qui en ont une plus ancienne, en retirant d'abord l'ancienne quand son installeur ne sait pas mettre à jour par-dessus.
 - **Interface en français et en anglais**, un fichier par langue.
 
 ## Ce qu'il vous faut
@@ -253,6 +265,105 @@ Faites la première étape avant la deuxième : si l'option est activée alors q
 - L'outil garde ce qu'il a lu pendant cinq minutes ; **Recharger** le relit.
 - Un même programme peut apparaître sous plusieurs noms quand son nom contient la version (par exemple *7-Zip 19.00* et *7-Zip 23.01*).
 
+## Désinstaller des logiciels des postes
+
+Depuis l'inventaire des postes, vous pouvez retirer un logiciel des postes, y compris un logiciel qu'Intune n'a pas installé. Il faut l'option [inventaire des postes](#inventaire-des-postes), et aucune autre permission.
+
+### Comment ça marche
+
+Intune n'a pas de bouton « désinstaller ce logiciel » pour ce qu'il n'a pas déployé. L'outil utilise le mécanisme qu'Intune possède : il crée une petite application Intune, nommée *Removal - \<logiciel\>*, dont le contenu est un script et dont le seul rôle est de désinstaller. Elle est affectée avec l'intention **Désinstaller** : Intune ne la lance donc que sur les postes où le logiciel est détecté, puis vérifie qu'il a disparu.
+
+Sur chaque poste, le script cherche le logiciel par son **nom exact** et le retire silencieusement :
+
+| Logiciel | Ce qui se passe |
+|---|---|
+| Installé par un MSI | Retiré avec son code produit. Fiable. |
+| Déclare une commande de désinstallation silencieuse | Cette commande est utilisée. |
+| Ni l'un ni l'autre | Le poste remonte un échec et rien n'est lancé. Vous ajoutez alors à la règle la commande silencieuse de l'éditeur. |
+| Application du Microsoft Store | Retirée pour tous les utilisateurs du poste. |
+
+L'outil n'essaie jamais d'options au hasard. Certains vieux logiciels n'ont aucune désinstallation silencieuse : ceux-là ne peuvent pas être retirés automatiquement, ni par cet outil ni par un autre.
+
+### Créer une désinstallation
+
+1. Ouvrez **Inventaire des postes**, ouvrez le logiciel, cliquez sur **Désinstaller ce logiciel**.
+2. Relisez le formulaire :
+   - **Logiciel** : les noms exacts. Ajoutez un autre nom depuis l'inventaire quand le même logiciel apparaît sous plusieurs noms (souvent parce que le nom contient la version).
+   - **Versions** : toutes, celles que vous cochez, ou tout ce qui est antérieur à une version.
+   - **Type** : installé pour tout le poste, dans le profil d'un utilisateur, ou application du Store. Un logiciel installé dans le profil d'un utilisateur est retiré dans la session de cet utilisateur, donc seulement quand il est connecté.
+   - **Commande** : laissez vide pour commencer. `{UninstallString}` désigne le désinstalleur trouvé sur le poste, par exemple `{UninstallString} /S`.
+   - **Cibles** : des groupes, tous les appareils ou tous les utilisateurs. Commencez par un petit groupe.
+   - **Durée** : *ponctuelle* (vous clôturez la règle quand le logiciel a disparu) ou *permanente* (il est retiré de nouveau s'il revient).
+3. Le formulaire indique combien d'installations l'inventaire connaît. Retapez le nom du premier logiciel pour confirmer, puis **Publier la désinstallation**.
+
+### Suivre et terminer une désinstallation
+
+La section **Désinstallations** liste les règles. Une règle affiche le résultat sur chaque poste — retiré, en attente du poste, ou en échec avec le code d'erreur d'Intune — et le nombre d'installations que l'inventaire signale encore. De là, vous pouvez changer les cibles, modifier la règle (par exemple pour ajouter une commande après un échec), ou **Terminer la règle** : son application Intune est supprimée et plus aucun poste n'est ciblé.
+
+Un poste n'agit qu'à son prochain contact avec Intune, et l'inventaire est actualisé environ une fois par jour : laissez ce délai avant de conclure.
+
+Sur un poste, le script écrit `IAFD-Remove-<logiciel>.log` dans le dossier des journaux de l'extension de gestion Intune (`C:\ProgramData\Microsoft\IntuneManagementExtension\Logs`), que l'action *Collecter les diagnostics* du portail récupère.
+
+### Sur un seul poste, à la demande
+
+Pour un cas isolé, vous pouvez retirer un logiciel d'un seul poste sans créer de règle pour un groupe. Ouvrez le poste dans **Inventaire des postes → Par poste** et cliquez sur **Désinstaller ici** à côté du logiciel.
+
+Cela utilise un autre mécanisme d'Intune, un *script de correction* lancé à la demande : l'outil crée un script de correction qui n'est jamais affecté, et demande à Intune de le lancer sur ce poste uniquement. Le poste l'exécute à son prochain contact, et la page de la règle affiche ensuite ce que le poste a répondu. Les mêmes réglages lancés sur un autre poste réutilisent le même script. Terminer la règle supprime le script.
+
+C'est une option séparée parce qu'elle demande davantage :
+
+1. Dans le portail Intune, **Appareils → Scripts et corrections** : les corrections doivent avoir été activées une fois, ce qui inclut la confirmation de la licence Windows (Windows Entreprise E3 ou E5, incluse dans Microsoft 365 E3, E5 et F3). Les postes doivent être joints à Microsoft Entra ou en jonction hybride.
+2. Dans l'inscription d'application Entra, ajoutez les autorisations déléguées `DeviceManagementScripts.ReadWrite.All` et `DeviceManagementManagedDevices.PrivilegedOperations.All`, puis accordez de nouveau le **consentement d'administrateur**.
+3. Dans `docker-compose.yml`, mettez `ENABLE_REMEDIATIONS: "true"` (avec `ENABLE_DEVICE_INVENTORY: "true"`), puis lancez `docker compose up -d` et reconnectez-vous.
+
+La seconde autorisation permet à l'administrateur connecté de lancer des actions privilégiées sur les postes. Laissez l'option désactivée si les désinstallations par groupe vous suffisent.
+
+### Choisir les postes un par un
+
+Une désinstallation par groupe peut aussi viser des postes que vous cochez. Sur la page d'une règle, **Postes choisis un par un** liste les postes qui ont le logiciel d'après l'inventaire ; cochez-en et cliquez sur **Désinstaller des postes cochés**.
+
+Intune ne sait cibler que des groupes : l'outil crée donc un groupe de sécurité par règle dans Microsoft Entra ID, nommé *IntuneAppFastDeploy removal - \<logiciel\>*, y ajoute les postes cochés et lui affecte la désinstallation. Le groupe est supprimé quand la règle est terminée. Intune peut mettre jusqu'à une heure à prendre en compte un nouveau membre.
+
+C'est une option séparée en raison de ce qu'elle demande : dans l'inscription d'application Entra, ajoutez les autorisations déléguées `Group.ReadWrite.All` et `Device.Read.All`, accordez de nouveau le consentement d'administrateur, puis mettez `ENABLE_DEVICE_GROUPS: "true"` (avec `ENABLE_DEVICE_INVENTORY: "true"`) dans `docker-compose.yml`. `Group.ReadWrite.All` permet à l'administrateur connecté de modifier n'importe quel groupe du tenant : laissez l'option désactivée si cibler des groupes existants vous suffit, ou utilisez la [désinstallation sur un seul poste](#sur-un-seul-poste-à-la-demande) pour les cas isolés.
+
+### Garde-fous
+
+- **Logiciels protégés** : l'outil refuse de retirer ce qui casserait la gestion des postes, la sécurité ou Windows (l'agent Intune, le Portail d'entreprise, Defender, Edge WebView2, Microsoft 365 Apps, les environnements Visual C++ et .NET, les pilotes matériels…). Ajoutez vos propres entrées dans `config/protected.txt`, une par ligne : un nom exact, ou `re:` suivi d'une expression régulière.
+- **Noms exacts uniquement** : pas de joker, pour ne jamais retirer par erreur un logiciel voisin.
+- **Confirmation par saisie**, avec le nombre d'installations concernées.
+
+Ces contrôles sont faits par le serveur, pas seulement par l'interface.
+
+### Désinstaller une application installée par Intune
+
+Sur la page d'une application Intune, **Désinstaller des postes** affecte cette application avec l'intention Désinstaller aux cibles choisies ; Intune utilise alors la commande de désinstallation de l'application elle-même. **Arrêter la désinstallation** la retire.
+
+### À savoir
+
+- **Une désinstallation ne s'annule pas.** Pour retrouver le logiciel, il faut le réinstaller.
+- Les règles de désinstallation sont conservées dans `config/removals.json`. Rien n'est écrit dans les Notes de vos applications.
+- Le script a été testé sous Windows avec de vrais installeurs, mais pas encore à travers un vrai tenant Intune : faites votre première désinstallation sur un logiciel sans importance et un ou deux postes.
+
+## Remplacer une version antérieure
+
+Quand un logiciel est déjà présent sur certains postes — qu'Intune l'ait installé ou non — vous pouvez publier une version plus récente pour ces postes uniquement. Il faut l'option [inventaire des postes](#inventaire-des-postes).
+
+1. Dans **Inventaire des postes**, ouvrez le logiciel et cliquez sur **Remplacer par une version plus récente**. (Vous pouvez aussi cocher la même option sur l'écran de vérification de n'importe quelle publication.)
+2. Donnez le lien du nouvel installeur, comme pour toute application.
+3. Sur l'écran de vérification, le bloc **Postes ayant déjà une version antérieure** est coché, avec le nom venu de l'inventaire. Vérifiez :
+   - les **noms** : exactement ceux de l'inventaire ; ajoutez les autres noms du même logiciel s'il en a plusieurs ;
+   - **Antérieure à la version** : par défaut, la version que vous publiez ;
+   - **comment l'ancienne version est remplacée** :
+
+     | Choix | Ce qui se passe sur le poste |
+     |---|---|
+     | L'installeur met à jour par-dessus | Le cas habituel. Rien n'est ajouté au paquet. |
+     | Désinstaller d'abord l'ancienne version, puis installer | Pour les logiciels qui ne se mettent pas à jour par-dessus. Le paquet embarque aussi le script de désinstallation : l'ancienne version est retirée silencieusement, puis l'installeur est lancé. **Si l'ancienne version ne peut pas être retirée, la nouvelle n'est pas installée.** |
+
+Dans les deux cas, Intune ne propose l'application qu'aux postes où une version antérieure est trouvée : vous pouvez l'affecter à *Tous les appareils* sans l'installer partout.
+
+Avec « désinstaller d'abord », les mêmes règles que pour une désinstallation s'appliquent : les MSI et les logiciels déclarant une désinstallation silencieuse sont retirés automatiquement, les autres ont besoin de la commande de l'éditeur, et les logiciels protégés sont refusés.
+
 ## Sur un serveur, en HTTPS
 
 En dehors de `localhost`, la connexion Microsoft exige HTTPS. Le profil `https` démarre un petit serveur web (Caddy) devant l'outil.
@@ -338,6 +449,8 @@ Tous les réglages vont dans la section `environment:` du service `app` de `dock
 | `DEFAULT_LANGUAGE` | `en` | Langue utilisée quand celle du navigateur n'est pas disponible. Mettez `fr` pour le français. |
 | `ENABLE_GROUP_PICKER` | `false` | Chercher les groupes par nom (demande `GroupMember.Read.All`). |
 | `ENABLE_DEVICE_INVENTORY` | `false` | Afficher les logiciels trouvés sur les postes (demande `DeviceManagementManagedDevices.Read.All`). Voir [Inventaire des postes](#inventaire-des-postes). |
+| `ENABLE_REMEDIATIONS` | `false` | Désinstaller un logiciel d'un seul poste à la demande (demande l'option d'inventaire et deux autorisations de plus). Voir [Sur un seul poste, à la demande](#sur-un-seul-poste-à-la-demande). |
+| `ENABLE_DEVICE_GROUPS` | `false` | Viser des postes choisis un par un pour une désinstallation (demande l'option d'inventaire, `Group.ReadWrite.All` et `Device.Read.All`). Voir [Choisir les postes un par un](#choisir-les-postes-un-par-un). |
 | `ALLOWED_USERS` | vide | Identifiants de connexion autorisés, séparés par des virgules. Vide : tout le tenant. |
 | `MAX_DOWNLOAD_MB` | `8192` | Taille maximale d'un installeur. |
 | `SESSION_HOURS` | `12` | Heures avant de devoir se reconnecter. |
@@ -382,7 +495,8 @@ docker compose logs -f app
 ## Limites
 
 - Applications Windows Win32 uniquement (pas le Microsoft Store, macOS ni les mobiles).
-- Un seul fichier d'installation par application. Un installeur qui a besoin de plusieurs fichiers à côté de lui doit d'abord être regroupé en un seul EXE ou MSI.
+- La désinstallation de logiciels dépend de l'existence d'une désinstallation silencieuse pour chaque logiciel ; voir [Désinstaller des logiciels des postes](#désinstaller-des-logiciels-des-postes).
+- Un seul fichier d'installation par application (l'outil y ajoute ses propres scripts quand vous choisissez de désinstaller d'abord une ancienne version). Un installeur qui a besoin de plusieurs fichiers à côté de lui doit d'abord être regroupé en un seul EXE ou MSI.
 - La commande de désinstallation et la règle de détection d'un EXE ne se devinent pas à partir du fichier : vous les saisissez une fois, puis elles sont reprises à chaque mise à jour.
 - Les règles de détection par script sont recopiées telles quelles.
 - La version la plus ancienne est supprimée d'Intune quand une troisième est publiée (sauf si vous décochez la case).
@@ -424,6 +538,7 @@ Organisation :
 | `src/iafd/appmodel.py` | Construire les données envoyées à Microsoft Graph (fonctions pures) |
 | `src/iafd/graph.py`, `publish.py` | Appels Microsoft Graph et enchaînements de publication |
 | `src/iafd/inventory.py` | Regroupement, recherche et pagination de l'inventaire des postes |
+| `src/iafd/removal.py`, `protected.py`, `scripts/Remove-Software.ps1` | Règles de désinstallation, liste protégée et script exécuté sur les postes |
 | `src/iafd/auth.py`, `web.py`, `jobs.py`, `store.py` | Connexion, API HTTP, tâches de fond, configuration locale |
 | `src/iafd/static/`, `src/iafd/locales/` | Interface et ses textes |
 
@@ -439,7 +554,7 @@ node docs/screenshots/make.js fr
 
 ### Référence Microsoft Graph
 
-L'outil utilise le point d'accès bêta de Microsoft Graph. Pages par rapport auxquelles le code a été vérifié : [detectedApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-detectedapp?view=graph-rest-beta), [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta).
+L'outil utilise le point d'accès bêta de Microsoft Graph. Pages par rapport auxquelles le code a été vérifié : [deviceHealthScript](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-devicehealthscript?view=graph-rest-beta), [initiateOnDemandProactiveRemediation](https://learn.microsoft.com/en-us/graph/api/intune-devices-manageddevice-initiateondemandproactiveremediation?view=graph-rest-beta), [win32LobAppPowerShellScriptRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapppowershellscriptrule?view=graph-rest-beta), [mobileAppInstallStatus](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappinstallstatus?view=graph-rest-beta), [detectedApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-detectedapp?view=graph-rest-beta), [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta).
 
 ## Ajouter une langue
 

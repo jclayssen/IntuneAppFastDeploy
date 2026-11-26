@@ -25,6 +25,8 @@ class Settings:
     max_download_mb: int = 8192
     enable_group_picker: bool = False
     enable_device_inventory: bool = False
+    enable_remediations: bool = False
+    enable_device_groups: bool = False
     default_language: str = "en"
     allowed_users: list[str] = field(default_factory=list)
     session_hours: int = 12
@@ -45,6 +47,8 @@ class Settings:
             max_download_mb=int(env("MAX_DOWNLOAD_MB", "8192")),
             enable_group_picker=_flag("ENABLE_GROUP_PICKER"),
             enable_device_inventory=_flag("ENABLE_DEVICE_INVENTORY"),
+            enable_remediations=_flag("ENABLE_REMEDIATIONS"),
+            enable_device_groups=_flag("ENABLE_DEVICE_GROUPS"),
             default_language=env("DEFAULT_LANGUAGE", "en").strip().lower() or "en",
             allowed_users=[
                 user.strip().lower() for user in env("ALLOWED_USERS", "").split(",") if user.strip()
@@ -63,6 +67,16 @@ class Settings:
         return self.public_url.startswith("https://")
 
     @property
+    def remediations(self) -> bool:
+        """Removal on a single device needs the inventory to pick the device."""
+        return self.enable_remediations and self.enable_device_inventory
+
+    @property
+    def device_groups(self) -> bool:
+        """Picking devices one by one needs the inventory to list them."""
+        return self.enable_device_groups and self.enable_device_inventory
+
+    @property
     def scopes(self) -> list[str]:
         resource = "/".join(self.graph_url.split("/")[:3])  # https://graph.microsoft.com
         scopes = [f"{resource}/DeviceManagementApps.ReadWrite.All"]
@@ -70,4 +84,10 @@ class Settings:
             scopes.append(f"{resource}/GroupMember.Read.All")
         if self.enable_device_inventory:
             scopes.append(f"{resource}/DeviceManagementManagedDevices.Read.All")
+        if self.remediations:
+            scopes.append(f"{resource}/DeviceManagementScripts.ReadWrite.All")
+            scopes.append(f"{resource}/DeviceManagementManagedDevices.PrivilegedOperations.All")
+        if self.device_groups:
+            scopes.append(f"{resource}/Group.ReadWrite.All")
+            scopes.append(f"{resource}/Device.Read.All")
         return scopes

@@ -8,6 +8,8 @@ from __future__ import annotations
 import copy
 import re
 
+from . import removal
+
 WIN32 = "#microsoft.graph.win32LobApp"
 ASSIGNMENT = "#microsoft.graph.mobileAppAssignment"
 SUPERSEDENCE = "#microsoft.graph.mobileAppSupersedence"
@@ -261,17 +263,30 @@ def intunewin_name(setup_file: str) -> str:
     return setup_file.rsplit(".", 1)[0] + ".intunewin"
 
 
+def _replace(form: dict) -> dict | None:
+    return removal.clean_replace(form.get("replace"), str(form.get("version") or ""))
+
+
 def _content_fields(form: dict, analysis: dict) -> dict:
     """Fields that change with every new installer."""
-    return {
+    replace = _replace(form)
+    setup_file = analysis["file_name"]
+    install = _require(form, "install_command", "error.install_required")
+    if replace and replace["mode"] == "reinstall":
+        # The real install command runs inside the wrapper, after the old version is removed.
+        removal.render_replace_script(replace["config"], install)
+        setup_file = removal.replace_script_name(replace["config"])
+        install = removal.replace_install_command(replace["config"])
+    fields = {
         "displayName": _require(form, "display_name", "error.name_required"),
         "displayVersion": str(form.get("version") or "").strip(),
         "fileName": intunewin_name(analysis["file_name"]),
-        "setupFilePath": analysis["file_name"],
-        "installCommandLine": _require(form, "install_command", "error.install_required"),
+        "setupFilePath": setup_file,
+        "installCommandLine": install,
         "uninstallCommandLine": _require(form, "uninstall_command", "error.uninstall_required"),
         "msiInformation": _msi_information(form, analysis),
     }
+    return fields
 
 
 def _rules_for(form: dict, analysis: dict, existing: dict | None) -> list[dict]:
@@ -287,8 +302,17 @@ def _rules_for(form: dict, analysis: dict, existing: dict | None) -> list[dict]:
             str(form.get("version") or ""),
             (analysis.get("msi") or {}).get("product_code", ""),
         )
-        return bumped
-    return requirements + detection_rules(detection)
+        return _with_replace(bumped, form)
+    return _with_replace(requirements + detection_rules(detection), form)
+
+
+def _with_replace(rules: list[dict], form: dict) -> list[dict]:
+    """Add (or renew) the rule that limits the app to devices with an older version."""
+    rules = [rule for rule in rules if not removal.is_tool_requirement(rule)]
+    replace = _replace(form)
+    if replace:
+        rules.append(removal.requirement_rule(replace["config"]))
+    return rules
 
 
 def new_app_body(form: dict, analysis: dict) -> dict:
@@ -462,13 +486,13 @@ def target_key(target: dict) -> str:
     return (target.get("groupId") or target.get("@odata.type", "")).lower()
 
 
-def assignment_for(target: dict, intent: str) -> dict:
+def assignment_for(target: dict, intent: str, notifications: str = "showAll") -> dict:
     graph_target: dict = {"@odata.type": _TARGETS[target["type"]]}
     if target["type"] == "group":
         graph_target["groupId"] = target["id"]
     settings: dict = {
         "@odata.type": "#microsoft.graph.win32LobAppAssignmentSettings",
-        "notifications": "showAll",
+        "notifications": notifications,
         "restartSettings": None,
         "installTimeSettings": None,
         "deliveryOptimizationPriority": "notConfigured",
@@ -508,6 +532,28 @@ def merge_assignments(current: list[dict], extra: list[dict]) -> list[dict]:
             seen.add(key)
             merged.append(clean_assignment(item))
     return merged
+
+
+def uninstall_assignments(targets: list[dict]) -> list[dict]:
+    """Assignments that remove the app from these targets, without a toast on the device."""
+    return [assignment_for(target, "uninstall", notifications="hideAll") for target in targets]
+
+
+def with_uninstall(current: list[dict], targets: list[dict]) -> list[dict]:
+    """Current assignments of an app, with ``targets`` switched to uninstall.
+
+    A target can only carry one intent: what it had before is replaced. Passing
+    no target removes every uninstall assignment and keeps the rest.
+    """
+    wanted = uninstall_assignments(targets)
+    replaced = {target_key(item["target"]) for item in wanted}
+    kept = [
+        clean_assignment(item)
+        for item in current
+        if target_key(item.get("target") or {}) not in replaced
+        and (targets or item.get("intent") != "uninstall")
+    ]
+    return kept + wanted
 
 
 def stage_assignments(stage: dict) -> list[dict]:
