@@ -40,7 +40,7 @@ Vous collez le lien du nouvel installeur, l'outil le télécharge, lit ce qu'il 
 
 ## Ce qu'il vous faut
 
-- Une machine avec **Docker** (Docker Desktop sous Windows/macOS, Docker Engine sous Linux) et un accès Internet.
+- Une machine avec **Docker** (Docker Desktop sous Windows/macOS, Docker Engine avec Compose 2.24 ou plus récent sous Linux) et un accès Internet.
 - Dans Microsoft Entra ID : le droit de créer une inscription d'application et d'**accorder le consentement administrateur** (Administrateur général, Administrateur de rôle privilégié ou Administrateur d'application cloud), une seule fois.
 - Pour chaque personne qui utilise l'outil : un rôle Intune permettant de gérer les applications (**Administrateur Intune** ou **Gestionnaire d'applications**). L'outil agit avec les droits de la personne connectée et ne peut jamais faire plus qu'elle dans le portail Intune.
 
@@ -66,31 +66,42 @@ Cela déclare à Microsoft que l'outil existe dans *votre* tenant. Comptez cinq 
 
 Aucun secret client n'est nécessaire : l'inscription est un *client public* et chacun se connecte avec son propre compte.
 
-**Facultatif — chercher les groupes par leur nom.** Par défaut, vous collez l'Object ID d'un groupe. Pour chercher les groupes par nom, ajoutez aussi l'autorisation déléguée `GroupMember.Read.All`, accordez à nouveau le consentement administrateur, et mettez `ENABLE_GROUP_PICKER=true` à l'étape 2.
+**Facultatif — chercher les groupes par leur nom.** Par défaut, vous collez l'Object ID d'un groupe. Pour chercher les groupes par nom, ajoutez aussi l'autorisation déléguée `GroupMember.Read.All`, accordez à nouveau le consentement administrateur, et mettez `ENABLE_GROUP_PICKER: "true"` dans `compose.yaml`.
 
 ## Étape 2 — Installer sur votre PC
 
-1. Récupérez les fichiers. Soit en clonant le dépôt :
+Un seul fichier suffit : `compose.yaml`. Il n'y a rien à cloner ni à construire.
+
+1. Créez un dossier vide et téléchargez-y le fichier :
 
    ```bash
-   git clone https://github.com/jclayssen/IntuneAppFastDeploy.git
+   curl -O https://raw.githubusercontent.com/jclayssen/IntuneAppFastDeploy/main/compose.yaml
    ```
+
+   Sous Windows PowerShell :
+
+   ```powershell
+   Invoke-WebRequest -Uri https://raw.githubusercontent.com/jclayssen/IntuneAppFastDeploy/main/compose.yaml -OutFile compose.yaml
+   ```
+
+   Vous pouvez aussi ouvrir le fichier dans votre navigateur et l'enregistrer, ou copier son contenu.
+
+2. Ouvrez `compose.yaml` dans un éditeur de texte et collez les deux valeurs de l'étape 1 entre les guillemets :
+
+   ```yaml
+   TENANT_ID: "00000000-0000-0000-0000-000000000000"
+   CLIENT_ID: "11111111-1111-1111-1111-111111111111"
+   ```
+
+   Pour une interface en français par défaut, mettez aussi `DEFAULT_LANGUAGE: "fr"`.
+
+3. **Sous Linux uniquement** : créez vous-même le dossier de configuration, pour qu'il vous appartienne et non à root :
 
    ```bash
-   cd IntuneAppFastDeploy
+   mkdir config
    ```
 
-   soit en téléchargeant seulement `compose.yaml`, `.env.example` et `Caddyfile` dans un dossier vide.
-
-2. Créez votre fichier de réglages à partir de l'exemple :
-
-   ```bash
-   cp .env.example .env
-   ```
-
-   Sous Windows PowerShell : `Copy-Item .env.example .env`
-
-3. Ouvrez `.env` dans un éditeur de texte et renseignez `TENANT_ID` et `CLIENT_ID` avec les deux valeurs de l'étape 1. Laissez le reste tel quel pour l'instant.
+   Si votre utilisateur n'est pas le numéro 1000 (vérifiez avec `id -u`), changez aussi la ligne `user: "1000:1000"` dans `compose.yaml`.
 
 4. Démarrez l'outil :
 
@@ -98,17 +109,11 @@ Aucun secret client n'est nécessaire : l'inscription est un *client public* et 
    docker compose up -d
    ```
 
-   Le premier démarrage télécharge l'image. Si elle ne peut pas être téléchargée (voir [Dépannage](#dépannage)), construisez-la à partir du code :
-
-   ```bash
-   docker compose up -d --build
-   ```
-
 5. Ouvrez <http://localhost:8080> et cliquez sur **Se connecter avec Microsoft**.
 
-Un dossier `config` apparaît à côté de `compose.yaml`. Il contient les groupes pilote/production (`config/rollout.json`). C'est un simple dossier sur votre disque, pas un volume Docker : sauvegardez-le comme n'importe quel fichier.
+Le dossier `config` à côté de `compose.yaml` contient les groupes pilote/production (`config/rollout.json`). C'est un simple dossier sur votre disque, pas un volume Docker : sauvegardez-le comme n'importe quel fichier.
 
-Pour arrêter l'outil :
+Après avoir changé un réglage dans `compose.yaml`, relancez `docker compose up -d`. Pour arrêter l'outil :
 
 ```bash
 docker compose down
@@ -160,7 +165,7 @@ Pour chacun, vous choisissez *Obligatoire* ou *Disponible*, et vous ajoutez des 
 
 - **Tous les appareils** / **Tous les utilisateurs** : un clic.
 - **Un groupe** : collez son **Object ID**. Vous le trouvez dans le centre d'administration Entra, sous **Groupes → \<le groupe\> → Vue d'ensemble → ID d'objet**. Le libellé n'est qu'un aide-mémoire pour vous.
-- Avec `ENABLE_GROUP_PICKER=true` (voir étape 1), une zone de recherche trouve les groupes par leur nom.
+- Avec `ENABLE_GROUP_PICKER: "true"` (voir étape 1), une zone de recherche trouve les groupes par leur nom.
 
 Au moment de publier une nouvelle version, vous choisissez *Les groupes pilotes d'abord*, *La production directement* ou *Personne pour l'instant*. Pendant la phase pilote, la page de l'application affiche le badge **Pilote** et le bouton **Passer en production**.
 
@@ -170,21 +175,24 @@ Ces réglages suivent l'application d'une version à la suivante. Ils sont stock
 
 En dehors de `localhost`, la connexion Microsoft exige HTTPS. Le profil `https` démarre un petit serveur web (Caddy) devant l'outil.
 
-1. Dans `.env`, renseignez :
+1. Dans `compose.yaml`, renseignez l'adresse dans le service `app`, puis le nom et le certificat dans le service `https` :
 
+   ```yaml
+   PUBLIC_URL: "https://intune-deploy.exemple.fr"
    ```
-   SITE_ADDRESS=intune-deploy.exemple.fr
-   PUBLIC_URL=https://intune-deploy.exemple.fr
-   TLS=internal
+
+   ```yaml
+   SITE_ADDRESS: "intune-deploy.exemple.fr"
+   TLS: "internal"
    ```
 
    `TLS` choisit le certificat :
 
-   | `TLS=` | Certificat | Conditions |
+   | `TLS:` | Certificat | Conditions |
    |---|---|---|
-   | `internal` | Autosigné, généré automatiquement | Aucune. Les navigateurs affichent un avertissement tant que le certificat n'est pas approuvé (voir plus bas). |
-   | `/certs/cert.pem /certs/key.pem` | Votre propre certificat | Placez le certificat (avec sa chaîne) et la clé privée dans le dossier `certs` sous ces noms. |
-   | `vous@exemple.fr` | Let's Encrypt, renouvelé automatiquement | `SITE_ADDRESS` doit être un nom DNS public pointant vers le serveur, et les ports 80 et 443 doivent être joignables depuis Internet. |
+   | `"internal"` | Autosigné, généré automatiquement | Aucune. Les navigateurs affichent un avertissement tant que le certificat n'est pas approuvé (voir plus bas). |
+   | `"/certs/cert.pem /certs/key.pem"` | Votre propre certificat | Placez le certificat (avec sa chaîne) et la clé privée dans un dossier `certs` à côté de `compose.yaml`, sous ces noms. |
+   | `"vous@exemple.fr"` | Let's Encrypt, renouvelé automatiquement | `SITE_ADDRESS` doit être un nom DNS public pointant vers le serveur, et les ports 80 et 443 doivent être joignables depuis Internet. |
 
 2. Dans l'inscription d'application Entra (**Authentification → Applications mobiles et de bureau → Ajouter un URI**), ajoutez :
 
@@ -200,17 +208,17 @@ En dehors de `localhost`, la connexion Microsoft exige HTTPS. Le profil `https` 
 
 4. Ouvrez `https://intune-deploy.exemple.fr`.
 
-**Approuver le certificat autosigné.** Avec `TLS=internal`, le certificat de l'autorité est écrit dans `config/caddy/caddy/pki/authorities/local/root.crt`. Importez-le sur les PC des collègues comme *Autorité de certification racine de confiance* (vous pouvez le déployer avec Intune) et l'avertissement disparaît.
+**Approuver le certificat autosigné.** Avec `TLS: "internal"`, le certificat de l'autorité est écrit dans `config/caddy/caddy/pki/authorities/local/root.crt`. Importez-le sur les PC des collègues comme *Autorité de certification racine de confiance* (vous pouvez le déployer avec Intune) et l'avertissement disparaît.
 
 **N'exposez pas l'outil sur Internet sans nécessité.** Il permet aux administrateurs connectés de pousser un logiciel sur tous les postes. Let's Encrypt impose que le serveur soit joignable depuis Internet ; sur un réseau interne, préférez votre propre certificat ou l'autosigné.
 
-Sous Linux, renseignez `PUID` et `PGID` dans `.env` avec le propriétaire du dossier (`id -u` et `id -g`) pour que l'outil puisse écrire dans `config`.
+Aucun autre fichier n'est nécessaire : la configuration du frontal HTTPS est contenue dans `compose.yaml`.
 
 ## Qui peut se connecter
 
 Seuls les comptes de votre tenant peuvent se connecter, et Intune applique les droits de chacun. Pour restreindre davantage, au choix :
 
-- renseignez `ALLOWED_USERS=premier@exemple.fr,second@exemple.fr` dans `.env`, ou
+- renseignez `ALLOWED_USERS: "premier@exemple.fr,second@exemple.fr"` dans `compose.yaml`, ou
 - dans le centre d'administration Entra, ouvrez **Applications d'entreprise → IntuneAppFastDeploy → Propriétés**, passez **Affectation requise ?** à **Oui**, puis ajoutez les personnes autorisées dans **Utilisateurs et groupes**.
 
 Les sessions vivent dans la mémoire du conteneur : le redémarrer déconnecte tout le monde.
@@ -238,7 +246,7 @@ Ce qui demande encore une personne : fusionner les demandes, regarder celle dont
 
 ## Référence des réglages
 
-Tous les réglages vont dans `.env`.
+Tous les réglages vont dans la section `environment:` du service `app` de `compose.yaml`. Relancez `docker compose up -d` après un changement.
 
 | Réglage | Défaut | Signification |
 |---|---|---|
@@ -251,17 +259,14 @@ Tous les réglages vont dans `.env`.
 | `MAX_DOWNLOAD_MB` | `8192` | Taille maximale d'un installeur. |
 | `SESSION_HOURS` | `12` | Heures avant de devoir se reconnecter. |
 | `CLIENT_SECRET` | vide | Uniquement pour une inscription de type *Web* avec secret. |
-| `PUID` / `PGID` | `1000` | Propriétaire du dossier `config` sous Linux. |
-| `PORT` | `8080` | Port local. Si vous le changez, changez aussi `PUBLIC_URL` et l'URI de redirection. |
-| `SITE_ADDRESS` | vide | Nom servi par le profil `https`. |
-| `TLS` | `internal` | Mode de certificat du profil `https`. |
-| `IMAGE` | image publiée | Utiliser une autre image, par exemple une que vous avez construite. |
 | `AUTHORITY_HOST` / `GRAPH_URL` | cloud public Microsoft | Pour les clouds nationaux. Non testé. |
+
+En dehors de `environment:`, trois autres lignes de `compose.yaml` peuvent être adaptées : `user:` (propriétaire du dossier `config` sous Linux), `ports:` (port local ; si vous le changez, changez aussi `PUBLIC_URL` et l'URI de redirection), et `SITE_ADDRESS` / `TLS` dans le service `https`.
 
 ## Confidentialité et sécurité
 
 - **Aucune télémétrie.** L'outil ne contacte que Microsoft (connexion, Microsoft Graph, le stockage Azure désigné par Intune pour l'envoi) et les liens de téléchargement que vous lui donnez.
-- **Rien de votre tenant ne quitte votre machine ni n'est stocké dans ce dépôt.** `.env`, `config/` et `certs/` sont exclus de Git.
+- **Rien de votre tenant ne quitte votre machine ni n'est stocké dans ce dépôt.** Vos identifiants sont dans votre propre copie de `compose.yaml`, et vos groupes dans votre dossier `config`.
 - **Aucun mot de passe ni secret n'est stocké.** La connexion utilise le flux par code d'autorisation avec PKCE ; les jetons restent en mémoire.
 - **Droits délégués uniquement.** Chaque action est faite au nom de la personne connectée et apparaît à son nom dans les journaux d'audit Intune.
 - **Les installeurs sont téléchargés par le serveur.** Toute personne qui peut se connecter peut faire télécharger une URL au serveur, y compris interne : réservez l'accès aux administrateurs.
@@ -273,7 +278,7 @@ Pour signaler un problème de sécurité, utilisez la page **Security → Report
 
 | Message ou symptôme | Cause et solution |
 |---|---|
-| *Configuration nécessaire* au démarrage | `TENANT_ID` ou `CLIENT_ID` est vide dans `.env`. Renseignez-les et relancez `docker compose up -d`. |
+| *Configuration nécessaire* au démarrage | `TENANT_ID` ou `CLIENT_ID` est vide dans `compose.yaml`. Renseignez-les et relancez `docker compose up -d`. |
 | `AADSTS50011` (URI de redirection incorrect) | L'adresse du navigateur et `PUBLIC_URL` doivent correspondre exactement à un URI de redirection de l'inscription, `http`/`https` et port compris. |
 | `AADSTS7000218` (secret client requis) | L'URI de redirection a été ajouté sous la plateforme *Web*. Déplacez-le dans **Applications mobiles et de bureau**, ou renseignez `CLIENT_SECRET`. |
 | `AADSTS65001` (consentement requis) | Le consentement administrateur n'a pas été accordé (étape 1, point 8). |
@@ -281,8 +286,8 @@ Pour signaler un problème de sécurité, utilisez la page **Security → Report
 | *Votre compte n'a pas les droits pour cette action dans Intune* | La personne connectée a besoin du rôle Administrateur Intune ou Gestionnaire d'applications. |
 | *Le lien ne renvoie pas un fichier MSI ou EXE* | Le lien mène à une page web ou demande une connexion. Téléchargez le fichier vous-même et utilisez **choisir un fichier**. |
 | *Intune a refusé la requête* | Le détail après le tiret est le message d'Intune. Utilisez **Télécharger le .intunewin** pour envoyer à la main, et ouvrez un ticket avec ce détail. |
-| `docker compose up` n'arrive pas à télécharger l'image | L'image n'est pas encore publiée ou elle est privée. Construisez-la : `docker compose up -d --build`. |
-| Permission refusée sur `config/rollout.json` (Linux) | Renseignez `PUID`/`PGID` dans `.env` avec le propriétaire du dossier. |
+| *Le dossier config n'est pas accessible en écriture* (bandeau rouge, Linux) | Docker a créé le dossier en tant que root. Donnez-le à l'utilisateur de la ligne `user:` : `sudo chown -R 1000:1000 config`. |
+| `docker compose up` n'arrive pas à télécharger l'image | Vérifiez l'accès Internet de la machine et que `ghcr.io` n'est pas bloqué par un proxy ou un pare-feu. |
 | L'application reste « non prête » dans Intune | Intune traite le paquet pendant quelques minutes après l'envoi. |
 
 Journaux :
@@ -313,6 +318,12 @@ uv run pytest
 
 ```bash
 uv run ruff check . && uv run ruff format .
+```
+
+Construire et lancer l'image à partir de votre copie du code plutôt que l'image publiée :
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml up -d --build
 ```
 
 Lancer l'interface face à un Intune simulé, sans connexion (développement uniquement) :

@@ -1,4 +1,4 @@
-"""Settings, read from environment variables (see ``.env.example``)."""
+"""Settings, read from environment variables (see ``compose.yaml``)."""
 
 from __future__ import annotations
 

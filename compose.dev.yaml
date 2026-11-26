@@ -1,0 +1,7 @@
+# For development: build the image from this checkout instead of pulling it.
+#
+#   docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+
+services:
+  app:
+    build: .

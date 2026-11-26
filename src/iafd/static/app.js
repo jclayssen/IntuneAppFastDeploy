@@ -203,6 +203,7 @@ async function showApps() {
       search,
       button(t("action.new_app"), () => showWizard(null)),
     ),
+    config.config_writable ? null : h("div", { class: "notice error", role: "alert" }, t("error.config_not_writable")),
     list,
   );
   let apps;

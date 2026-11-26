@@ -16,7 +16,7 @@
   "action.add_group": "Add",
   "action.remove": "Remove",
   "setup.title": "Configuration needed",
-  "setup.text": "TENANT_ID and CLIENT_ID are not set. Create the app registration in Microsoft Entra ID as described in the README, put both values in the .env file, then restart the container.",
+  "setup.text": "TENANT_ID and CLIENT_ID are not set. Create the app registration in Microsoft Entra ID as described in the README, put both values in compose.yaml, then run: docker compose up -d",
   "setup.redirect": "Redirect URI to register:",
   "login.title": "Sign in",
   "login.text": "Sign in with your Intune administrator account. The tool acts with your own rights and stores no password.",
@@ -186,5 +186,6 @@
   "error.no_pilot_groups": "Add at least one pilot group, or choose another assignment",
   "error.login_unreachable": "Microsoft sign-in cannot be reached: check TENANT_ID, CLIENT_ID and the Internet access of the server",
   "footer.test_version": "Test version",
-  "footer.test_version_hint": "Not yet validated on a real Intune tenant: try it on an unimportant application first."
+  "footer.test_version_hint": "Not yet validated on a real Intune tenant: try it on an unimportant application first.",
+  "error.config_not_writable": "The config folder cannot be written, so pilot/production groups cannot be saved. On Linux, give it to the user set in compose.yaml: sudo chown -R 1000:1000 config"
 }

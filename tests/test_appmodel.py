@@ -223,3 +223,19 @@ def test_clone_drops_read_only_and_script_references():
     body = appmodel.clone_app_body(existing, form, exe_analysis())
     assert not set(body) & appmodel.READ_ONLY
     assert body["notes"] == "n"
+
+
+def test_unwritable_config_folder_is_reported_not_crashed(tmp_path, monkeypatch):
+    blocker = tmp_path / "config"
+    blocker.write_text("a file where the folder should be")
+    assert RolloutStore(blocker).writable() is False
+
+    store = RolloutStore(tmp_path / "ok")
+    assert store.writable() is True
+
+    def denied(*_):
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr("iafd.store.os.replace", denied)
+    with pytest.raises(StoreError, match="error.config_not_writable"):
+        store.set("a", "App", None, None)

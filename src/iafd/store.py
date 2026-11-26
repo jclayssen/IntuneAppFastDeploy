@@ -61,6 +61,17 @@ class RolloutStore:
         self.path = config_dir / "rollout.json"
         self._lock = threading.Lock()
 
+    def writable(self) -> bool:
+        """Can the configuration folder be written? (wrong owner on Linux, usually)"""
+        probe = self.path.parent / ".write-test"
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            probe.write_text("", encoding="utf-8")
+            probe.unlink()
+        except OSError:
+            return False
+        return True
+
     def _read(self) -> dict:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
@@ -72,10 +83,13 @@ class RolloutStore:
         return data
 
     def _write(self, data: dict) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        os.replace(tmp, self.path)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            os.replace(tmp, self.path)
+        except OSError as exc:
+            raise StoreError("error.config_not_writable") from exc
 
     def get(self, app_id: str) -> dict:
         with self._lock:
