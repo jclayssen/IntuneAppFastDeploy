@@ -30,13 +30,13 @@ Never include real credentials, tokens or data from your tenant in a report.
 
 ## What to expect
 
-This project is maintained on a volunteer basis, without a guaranteed response time. The aim is to:
+This project is maintained by one person, on a volunteer basis, who can be away for a few weeks at a time. There is no guaranteed response time. The aim is to:
 
-- acknowledge a report within **7 days**;
-- tell you whether it is accepted, and what is planned, within **14 days**;
+- acknowledge a report within **30 days**;
+- tell you whether it is accepted, and what is planned, within **60 days**;
 - publish a fix in `latest` as soon as it is ready, then a GitHub security advisory crediting you, unless you prefer to stay anonymous.
 
-If the report is declined (not reproducible, out of scope, or expected behaviour), you get the reason. Please keep the details private until a fix is published or 90 days have passed, whichever comes first.
+If the report is declined (not reproducible, out of scope, or expected behaviour), you get the reason. Please keep the details private until a fix is published or 120 days have passed, whichever comes first. A silence of a few weeks means the maintainer is away, not that the report is ignored.
 
 ## Scope
 
@@ -103,13 +103,13 @@ N'incluez jamais d'identifiants réels, de jetons ou de données de votre tenant
 
 ## À quoi vous attendre
 
-Ce projet est maintenu bénévolement, sans délai de réponse garanti. L'objectif est de :
+Ce projet est maintenu par une seule personne, bénévolement, qui peut être absente plusieurs semaines d'affilée. Aucun délai de réponse n'est garanti. L'objectif est de :
 
-- accuser réception d'un signalement sous **7 jours** ;
-- vous dire s'il est retenu, et ce qui est prévu, sous **14 jours** ;
+- accuser réception d'un signalement sous **30 jours** ;
+- vous dire s'il est retenu, et ce qui est prévu, sous **60 jours** ;
 - publier un correctif dans `latest` dès qu'il est prêt, puis un avis de sécurité GitHub qui vous crédite, sauf si vous préférez rester anonyme.
 
-Si le signalement n'est pas retenu (non reproductible, hors périmètre ou comportement attendu), la raison vous est donnée. Merci de garder les détails privés jusqu'à la publication d'un correctif ou pendant 90 jours, selon la première échéance.
+Si le signalement n'est pas retenu (non reproductible, hors périmètre ou comportement attendu), la raison vous est donnée. Merci de garder les détails privés jusqu'à la publication d'un correctif ou pendant 120 jours, selon la première échéance. Un silence de quelques semaines signifie que le mainteneur est absent, pas que le signalement est ignoré.
 
 ## Périmètre
 
