@@ -183,5 +183,6 @@
   "error.bad_group_id": "Un Object ID de groupe ressemble à 00000000-0000-0000-0000-000000000000",
   "error.config_unreadable": "Le fichier config/rollout.json est illisible",
   "error.no_production_groups": "Aucun groupe de production n'est configuré et il n'y a pas de version précédente à reprendre",
-  "error.no_pilot_groups": "Ajoutez au moins un groupe pilote, ou choisissez une autre affectation"
+  "error.no_pilot_groups": "Ajoutez au moins un groupe pilote, ou choisissez une autre affectation",
+  "error.login_unreachable": "La connexion Microsoft est injoignable : vérifiez TENANT_ID, CLIENT_ID et l'accès Internet du serveur"
 }

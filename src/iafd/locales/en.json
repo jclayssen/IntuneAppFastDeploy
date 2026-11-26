@@ -183,5 +183,6 @@
   "error.bad_group_id": "A group Object ID looks like 00000000-0000-0000-0000-000000000000",
   "error.config_unreadable": "The file config/rollout.json cannot be read",
   "error.no_production_groups": "No production group is configured and there is no previous version to copy from",
-  "error.no_pilot_groups": "Add at least one pilot group, or choose another assignment"
+  "error.no_pilot_groups": "Add at least one pilot group, or choose another assignment",
+  "error.login_unreachable": "Microsoft sign-in cannot be reached: check TENANT_ID, CLIENT_ID and the Internet access of the server"
 }

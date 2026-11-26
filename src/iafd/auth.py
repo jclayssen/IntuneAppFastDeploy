@@ -72,9 +72,12 @@ class Auth:
         with self._lock:
             now = time.time()
             self._flows = {k: v for k, v in self._flows.items() if v[0] > now}
-            flow = self._app().initiate_auth_code_flow(
-                self.settings.scopes, redirect_uri=self.redirect_uri, prompt="select_account"
-            )
+            try:
+                flow = self._app().initiate_auth_code_flow(
+                    self.settings.scopes, redirect_uri=self.redirect_uri, prompt="select_account"
+                )
+            except Exception as exc:  # noqa: BLE001 - wrong tenant id, no network, ...
+                raise AuthError("error.login_unreachable", type(exc).__name__) from exc
             if "auth_uri" not in flow:
                 raise AuthError("error.login_failed", str(flow.get("error_description", "")))
             self._flows[flow["state"]] = (now + LOGIN_TTL, flow)
@@ -87,8 +90,8 @@ class Auth:
                 raise AuthError("error.login_expired")
             try:
                 result = self._app().acquire_token_by_auth_code_flow(entry[1], query)
-            except ValueError as exc:
-                raise AuthError("error.login_failed", str(exc)) from exc
+            except Exception as exc:  # noqa: BLE001 - state mismatch, no network, ...
+                raise AuthError("error.login_failed", type(exc).__name__) from exc
             if "access_token" not in result:
                 raise AuthError("error.login_failed", str(result.get("error_description", "")))
             claims = result.get("id_token_claims") or {}

@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install the locked dependencies
+        run: uv sync --frozen
+      - name: Lint
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: Tests
+        run: uv run pytest -q
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image (not published)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: iafd:ci
+      - name: The container starts and answers
+        run: |
+          docker run -d --name iafd --user 1000:1000 -p 8080:8080 iafd:ci
+          for attempt in $(seq 1 20); do
+            if curl -fsS http://localhost:8080/healthz; then exit 0; fi
+            sleep 1
+          done
+          docker logs iafd
+          exit 1

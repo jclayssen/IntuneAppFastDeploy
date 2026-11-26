@@ -62,7 +62,8 @@ class Settings:
 
     @property
     def scopes(self) -> list[str]:
-        scopes = ["DeviceManagementApps.ReadWrite.All"]
+        resource = "/".join(self.graph_url.split("/")[:3])  # https://graph.microsoft.com
+        scopes = [f"{resource}/DeviceManagementApps.ReadWrite.All"]
         if self.enable_group_picker:
-            scopes.append("GroupMember.Read.All")
+            scopes.append(f"{resource}/GroupMember.Read.All")
         return scopes
