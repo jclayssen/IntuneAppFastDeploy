@@ -328,5 +328,15 @@
   "removal.on_demand_long": "À la demande, sur les postes listés ci-dessous",
   "removal.on_demand_hint": "Pour la lancer sur un autre poste, ouvrez ce poste dans l'inventaire et choisissez « Désinstaller ici » avec les mêmes réglages.",
   "removal.output": "Réponse du poste",
-  "removal.state_absent": "Non installé"
+  "removal.state_absent": "Non installé",
+  "error.device_groups_disabled": "Le choix des postes un par un n'est pas activé",
+  "error.removal_no_device": "Cochez au moins un poste",
+  "error.removal_unknown_device": "L'un de ces postes n'a plus le logiciel d'après l'inventaire : rechargez la page",
+  "removal.devices_title": "Postes choisis un par un",
+  "removal.devices_text": "Intune ne sait cibler que des groupes. Les postes que vous cochez sont ajoutés à un groupe de sécurité que l'outil crée pour cette règle dans Microsoft Entra ID, et qu'il supprime quand la règle est terminée. Intune peut mettre jusqu'à une heure à prendre en compte un nouveau membre du groupe.",
+  "removal.devices_load": "Afficher les postes qui ont ce logiciel",
+  "removal.devices_pick": "Désinstaller des postes cochés",
+  "removal.devices_none": "D'après l'inventaire, plus aucun poste n'a ce logiciel.",
+  "removal.devices_chosen": "Déjà choisis : {names}",
+  "removal.devices_missing": "Ces postes n'ont pas d'objet dans Microsoft Entra ID et n'ont pas pu être ajoutés : {names}"
 }

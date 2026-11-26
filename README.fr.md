@@ -318,6 +318,14 @@ C'est une option séparée parce qu'elle demande davantage :
 
 La seconde autorisation permet à l'administrateur connecté de lancer des actions privilégiées sur les postes. Laissez l'option désactivée si les désinstallations par groupe vous suffisent.
 
+### Choisir les postes un par un
+
+Une désinstallation par groupe peut aussi viser des postes que vous cochez. Sur la page d'une règle, **Postes choisis un par un** liste les postes qui ont le logiciel d'après l'inventaire ; cochez-en et cliquez sur **Désinstaller des postes cochés**.
+
+Intune ne sait cibler que des groupes : l'outil crée donc un groupe de sécurité par règle dans Microsoft Entra ID, nommé *IntuneAppFastDeploy removal - \<logiciel\>*, y ajoute les postes cochés et lui affecte la désinstallation. Le groupe est supprimé quand la règle est terminée. Intune peut mettre jusqu'à une heure à prendre en compte un nouveau membre.
+
+C'est une option séparée en raison de ce qu'elle demande : dans l'inscription d'application Entra, ajoutez les autorisations déléguées `Group.ReadWrite.All` et `Device.Read.All`, accordez de nouveau le consentement d'administrateur, puis mettez `ENABLE_DEVICE_GROUPS: "true"` (avec `ENABLE_DEVICE_INVENTORY: "true"`) dans `docker-compose.yml`. `Group.ReadWrite.All` permet à l'administrateur connecté de modifier n'importe quel groupe du tenant : laissez l'option désactivée si cibler des groupes existants vous suffit, ou utilisez la [désinstallation sur un seul poste](#sur-un-seul-poste-à-la-demande) pour les cas isolés.
+
 ### Garde-fous
 
 - **Logiciels protégés** : l'outil refuse de retirer ce qui casserait la gestion des postes, la sécurité ou Windows (l'agent Intune, le Portail d'entreprise, Defender, Edge WebView2, Microsoft 365 Apps, les environnements Visual C++ et .NET, les pilotes matériels…). Ajoutez vos propres entrées dans `config/protected.txt`, une par ligne : un nom exact, ou `re:` suivi d'une expression régulière.
@@ -442,6 +450,7 @@ Tous les réglages vont dans la section `environment:` du service `app` de `dock
 | `ENABLE_GROUP_PICKER` | `false` | Chercher les groupes par nom (demande `GroupMember.Read.All`). |
 | `ENABLE_DEVICE_INVENTORY` | `false` | Afficher les logiciels trouvés sur les postes (demande `DeviceManagementManagedDevices.Read.All`). Voir [Inventaire des postes](#inventaire-des-postes). |
 | `ENABLE_REMEDIATIONS` | `false` | Désinstaller un logiciel d'un seul poste à la demande (demande l'option d'inventaire et deux autorisations de plus). Voir [Sur un seul poste, à la demande](#sur-un-seul-poste-à-la-demande). |
+| `ENABLE_DEVICE_GROUPS` | `false` | Viser des postes choisis un par un pour une désinstallation (demande l'option d'inventaire, `Group.ReadWrite.All` et `Device.Read.All`). Voir [Choisir les postes un par un](#choisir-les-postes-un-par-un). |
 | `ALLOWED_USERS` | vide | Identifiants de connexion autorisés, séparés par des virgules. Vide : tout le tenant. |
 | `MAX_DOWNLOAD_MB` | `8192` | Taille maximale d'un installeur. |
 | `SESSION_HOURS` | `12` | Heures avant de devoir se reconnecter. |

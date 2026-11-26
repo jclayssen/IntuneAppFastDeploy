@@ -172,6 +172,7 @@ def build():
         default_language="fr",
         enable_device_inventory=True,
         enable_remediations=True,
+        enable_device_groups=True,
     )
     app = create_app(
         settings,

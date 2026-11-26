@@ -337,6 +337,46 @@ def remove_on_device(
     return store.save(rule)
 
 
+def target_devices(
+    graph: Graph, store: RemovalStore, rule: dict, devices: list[dict]
+) -> tuple[dict, list[str]]:
+    """Aim a removal at devices picked one by one.
+
+    Intune only targets groups, so the tool keeps one Entra security group per
+    rule and adds the devices to it. ``devices`` are managed devices as Intune
+    returns them. Returns the rule and the names of devices that have no Entra
+    object (they cannot be put in a group).
+    """
+    group = rule.get("device_group")
+    if group is None:
+        name = ("IntuneAppFastDeploy removal - " + rule["label"])[:120]
+        group_id = graph.create_security_group(
+            name,
+            "Devices picked one by one for a software removal. Created by IntuneAppFastDeploy; "
+            "deleted when the removal rule ends.",
+            "iafd-removal-" + removal.slug(rule["label"])[:30] + "-" + rule["id"][:8],
+        )
+        group = {"id": group_id, "name": name, "devices": []}
+    known = {device["id"] for device in group["devices"]}
+    missing: list[str] = []
+    for device in devices:
+        if device["id"] in known:
+            continue
+        name = device.get("deviceName") or device["id"]
+        object_id = None
+        if device.get("azureADDeviceId"):
+            object_id = graph.entra_device_object_id(device["azureADDeviceId"])
+        if object_id is None:
+            missing.append(name)
+            continue
+        graph.add_group_member(group["id"], object_id)
+        group["devices"].append({"id": device["id"], "name": name})
+    rule = store.save({**rule, "device_group": group})
+    targets = [t for t in rule["targets"] if t.get("id") != group["id"]]
+    targets.append({"type": "group", "id": group["id"], "name": group["name"]})
+    return retarget_removal(graph, store, rule, targets), missing
+
+
 def finish_removal(graph: Graph, store: RemovalStore, rule: dict) -> None:
     """Stop a rule: no device is targeted any more and its Intune object is deleted."""
     try:
@@ -346,6 +386,8 @@ def finish_removal(graph: Graph, store: RemovalStore, rule: dict) -> None:
             return
         graph.assign(rule["app_id"], [])
         graph.delete_app(rule["app_id"])
+        if rule.get("device_group"):
+            graph.delete_group(rule["device_group"]["id"])
     except GraphError as exc:
         if exc.status != 404:  # already deleted in the portal: nothing left to clean
             raise

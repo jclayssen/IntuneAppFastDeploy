@@ -7,6 +7,7 @@ this tool can never do more than that person can do in the Intune portal.
 from __future__ import annotations
 
 import base64
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -145,6 +146,51 @@ class Graph:
     def device_statuses(self, app_id: str) -> list[dict]:
         """Per-device install state of an app (used for removal results)."""
         return self.get_all(f"/deviceAppManagement/mobileApps/{app_id}/deviceStatuses")
+
+    # ----------------------------------------------------------------- Entra groups of devices
+
+    def entra_device_object_id(self, azure_ad_device_id: str) -> str | None:
+        """The directory object of a device, which is what a group holds as member."""
+        if not re.fullmatch(
+            r"[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", azure_ad_device_id
+        ):
+            return None  # not an identifier: never placed in a filter
+        result = self.request(
+            "GET",
+            "/devices",
+            params={"$filter": f"deviceId eq '{azure_ad_device_id}'", "$select": "id"},
+        )
+        found = result.get("value") or []
+        return found[0]["id"] if found else None
+
+    def create_security_group(self, name: str, description: str, nickname: str) -> str:
+        group = self.request(
+            "POST",
+            "/groups",
+            json={
+                "displayName": name,
+                "description": description,
+                "mailEnabled": False,
+                "mailNickname": nickname,
+                "securityEnabled": True,
+            },
+        )
+        return group["id"]
+
+    def add_group_member(self, group_id: str, object_id: str) -> None:
+        try:
+            self.request(
+                "POST",
+                f"/groups/{group_id}/members/$ref",
+                json={"@odata.id": f"{self._base}/directoryObjects/{object_id}"},
+            )
+        except GraphError as exc:
+            # Already a member: nothing to do.
+            if exc.status != 400 or "already exist" not in exc.message.lower():
+                raise
+
+    def delete_group(self, group_id: str) -> None:
+        self.request("DELETE", f"/groups/{group_id}")
 
     # ----------------------------------------------------------------- remediation scripts
 

@@ -140,6 +140,7 @@ def create_app(
             "group_picker": settings.enable_group_picker,
             "device_inventory": settings.enable_device_inventory,
             "remediations": settings.remediations,
+            "device_groups": settings.device_groups,
             "max_download_mb": settings.max_download_mb,
             "redirect_uri": auth.redirect_uri,
             "config_writable": store.writable(),
@@ -503,6 +504,64 @@ def create_app(
             "remaining": sum(row["devices"] for row in rows),
             "portal_url": None if on_demand else portal + rule["app_id"],
         }
+
+    def rule_devices(session: Session, graph: Graph, rule: dict) -> dict[str, dict]:
+        """Managed devices that have the software of a rule, by managed device id."""
+        wanted = {name.casefold() for name in rule["config"]["names"]}
+        found: dict[str, dict] = {}
+        for group in detected_groups(session):
+            if group["name"].casefold() not in wanted:
+                continue
+            for entry in group["versions"]:
+                if not removal.version_wanted(rule["config"]["versions"], entry["version"]):
+                    continue
+                for device in graph.detected_app_devices(entry["id"]):
+                    found.setdefault(device["id"], {**device, "_version": entry["version"]})
+        return found
+
+    def device_groups_rule(request: Request, rule_id: str) -> tuple[Session, dict]:
+        session = inventory_session(request)
+        if not settings.device_groups:
+            raise HTTPException(404, {"code": "error.device_groups_disabled", "detail": ""})
+        return session, editable_rule(rule_id)
+
+    @app.get("/api/removals/{rule_id}/devices")
+    def removals_devices(request: Request, rule_id: str) -> dict:
+        """Devices that have the software, to pick the ones the removal should reach."""
+        session, rule = device_groups_rule(request, rule_id)
+        graph = make_graph(session)
+        try:
+            found = rule_devices(session, graph, rule)
+        finally:
+            graph.close()
+        chosen = {device["id"] for device in (rule.get("device_group") or {}).get("devices", [])}
+        rows = [
+            {
+                **inventory.summarize_device(device),
+                "version": device["_version"],
+                "chosen": device["id"] in chosen,
+            }
+            for device in found.values()
+        ]
+        return {"devices": sorted(rows, key=lambda row: row["name"].casefold())}
+
+    @app.post("/api/removals/{rule_id}/devices")
+    def removals_pick_devices(request: Request, rule_id: str, body: dict = Body(...)) -> dict:  # noqa: B008
+        session, rule = device_groups_rule(request, rule_id)
+        asked = {identifier(str(value)) for value in body.get("device_ids") or []}
+        if not asked:
+            raise RemovalError("error.removal_no_device")
+        graph = make_graph(session)
+        try:
+            # Only devices Intune itself reports as having the software can be picked.
+            found = rule_devices(session, graph, rule)
+            devices = [found[device_id] for device_id in asked if device_id in found]
+            if len(devices) != len(asked):
+                raise RemovalError("error.removal_unknown_device")
+            rule, missing = publish.target_devices(graph, removals, rule, devices)
+        finally:
+            graph.close()
+        return {"rule": rule, "missing": missing}
 
     @app.put("/api/removals/{rule_id}/targets")
     def removals_targets(request: Request, rule_id: str, body: dict = Body(...)) -> dict:  # noqa: B008

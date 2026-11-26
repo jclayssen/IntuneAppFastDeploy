@@ -1350,6 +1350,61 @@ function showOnDemandForm(device, app) {
   );
 }
 
+// Intune only targets groups: devices picked here go into an Entra group kept for the rule.
+function devicePicker(rule) {
+  const body = h("div", {});
+  const message = h("div", {});
+  const load = async (control) => {
+    let devices;
+    try {
+      devices = (await busy(control, () => api("GET", `/api/removals/${rule.id}/devices`))).devices;
+    } catch (error) {
+      message.replaceChildren(errorBox(error));
+      return;
+    }
+    if (!devices.length) {
+      body.replaceChildren(h("p", { class: "muted" }, t("removal.devices_none")));
+      return;
+    }
+    const boxes = new Map();
+    const rows = devices.map((device) => {
+      const box = h("input", { type: "checkbox", checked: device.chosen, disabled: device.chosen, "aria-label": device.name });
+      boxes.set(device.id, box);
+      return h("tr", {}, h("td", {}, box), h("td", {}, device.name), h("td", {}, device.user || "—"), h("td", {}, device.version || "—"), h("td", {}, when(device.last_sync)));
+    });
+    const pick = async (event) => {
+      message.replaceChildren();
+      const ids = devices.filter((device) => !device.chosen && boxes.get(device.id).checked).map((device) => device.id);
+      try {
+        const result = await busy(event.target, () => api("POST", `/api/removals/${rule.id}/devices`, { device_ids: ids }));
+        if (result.missing.length) {
+          message.replaceChildren(h("div", { class: "notice" }, t("removal.devices_missing", { names: result.missing.join(", ") })));
+          load(null);
+        } else {
+          showRemoval(rule.id);
+        }
+      } catch (error) {
+        message.replaceChildren(errorBox(error));
+      }
+    };
+    body.replaceChildren(
+      table(["", t("inventory.device"), t("inventory.user"), t("apps.version"), t("inventory.last_sync")], rows),
+      h("div", { class: "row end" }, button(t("removal.devices_pick"), pick, "danger")),
+    );
+  };
+  const chosen = rule.device_group ? rule.device_group.devices.map((device) => device.name).join(", ") : "";
+  body.append(h("div", { class: "row end" }, button(t("removal.devices_load"), (event) => load(event.target), "ghost")));
+  return h(
+    "div",
+    { class: "panel" },
+    h("h2", {}, t("removal.devices_title")),
+    h("p", { class: "muted" }, t("removal.devices_text")),
+    chosen ? h("p", {}, t("removal.devices_chosen", { names: chosen })) : null,
+    message,
+    body,
+  );
+}
+
 async function showRemoval(ruleId) {
   drawNav("removals");
   show(h("p", { class: "muted" }, t("apps.loading")));
@@ -1433,6 +1488,7 @@ async function showRemoval(ruleId) {
       detail.portal_url ? h("p", {}, h("a", { href: detail.portal_url, target: "_blank", rel: "noopener noreferrer" }, t("removal.open_portal"))) : h("p", { class: "hint" }, t("removal.on_demand_hint")),
     ),
     onDemand ? null : h("div", { class: "panel" }, h("h2", {}, t("removal.where")), targets.node, h("div", { class: "row end" }, button(t("removal.save_targets"), saveTargets, "ghost"))),
+    !onDemand && config.device_groups ? devicePicker(rule) : null,
   );
 }
 

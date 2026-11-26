@@ -316,6 +316,14 @@ It is a separate option because it needs more:
 
 The second permission lets the signed-in administrator start privileged actions on devices. Leave the option off if you only need removals by group.
 
+### Picking devices one by one
+
+A removal by group can also be aimed at devices you tick. On the page of a rule, **Devices picked one by one** lists the devices that have the software according to the inventory; tick some and click **Remove from the ticked devices**.
+
+Intune only targets groups, so the tool creates one security group per rule in Microsoft Entra ID, named *IntuneAppFastDeploy removal - \<program\>*, adds the ticked devices to it and assigns the removal to it. The group is deleted when the rule ends. Intune can take up to an hour to take a new member into account.
+
+It is a separate option because of what it needs: in the Entra app registration, add the delegated permissions `Group.ReadWrite.All` and `Device.Read.All`, grant admin consent again, then set `ENABLE_DEVICE_GROUPS: "true"` (with `ENABLE_DEVICE_INVENTORY: "true"`) in `docker-compose.yml`. `Group.ReadWrite.All` lets the signed-in administrator change any group of the tenant: leave the option off if targeting existing groups is enough, or use [removal on one device](#on-one-device-on-demand) for isolated cases.
+
 ### Guardrails
 
 - **Protected software**: the tool refuses to remove what would break device management, security or Windows (the Intune agent, Company Portal, Defender, Edge WebView2, Microsoft 365 Apps, Visual C++ and .NET runtimes, hardware drivers…). Add your own entries in `config/protected.txt`, one per line: an exact name, or `re:` followed by a regular expression.
@@ -440,6 +448,7 @@ All settings go in the `environment:` section of the `app` service in `docker-co
 | `ENABLE_GROUP_PICKER` | `false` | Search groups by name (needs `GroupMember.Read.All`). |
 | `ENABLE_DEVICE_INVENTORY` | `false` | Show the software found on the devices (needs `DeviceManagementManagedDevices.Read.All`). See [Device inventory](#device-inventory). |
 | `ENABLE_REMEDIATIONS` | `false` | Remove software from a single device on demand (needs the inventory option and two more permissions). See [On one device, on demand](#on-one-device-on-demand). |
+| `ENABLE_DEVICE_GROUPS` | `false` | Aim a removal at devices picked one by one (needs the inventory option, `Group.ReadWrite.All` and `Device.Read.All`). See [Picking devices one by one](#picking-devices-one-by-one). |
 | `ALLOWED_USERS` | empty | Comma-separated sign-in names allowed to use the tool. Empty: anyone in the tenant. |
 | `MAX_DOWNLOAD_MB` | `8192` | Largest installer accepted. |
 | `SESSION_HOURS` | `12` | Hours before a new sign-in is required. |

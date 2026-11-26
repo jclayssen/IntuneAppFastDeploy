@@ -35,6 +35,8 @@ class FakeIntune:
         self.health_scripts: dict[str, dict] = {}
         self.health_runs: dict[str, dict[str, dict | None]] = {}
         self.remediations_unlicensed = False
+        self.groups: dict[str, dict] = {}  # group id -> {name, members: set of object ids}
+        self.unregistered: set[str] = set()  # device ids without an Entra object
         self._ids = itertools.count(1)
 
     def add_app(self, **fields) -> dict:
@@ -57,9 +59,11 @@ class FakeIntune:
 
     def add_device(self, name: str, user: str, software: list[tuple[str, str, str]]) -> dict:
         """A Windows device with (name, version, publisher) entries installed on it."""
-        device_id = f"dev-{len(self.devices) + 1}"
+        number = len(self.devices) + 1
+        device_id = f"dev-{number}"
         self.devices[device_id] = {
             "id": device_id,
+            "azureADDeviceId": f"aaaaaaaa-0000-0000-0000-{number:012d}",
             "deviceName": name,
             "userPrincipalName": user,
             "operatingSystem": "Windows",
@@ -94,9 +98,21 @@ class FakeIntune:
         return [
             (device_id, entry)
             for device_id, software in self.installed.items()
+            if self._reached(app_id, device_id)
             for entry in software
             if entry[0].casefold() in names
         ]
+
+    def _reached(self, app_id: str, device_id: str) -> bool:
+        """Is this device in one of the targets of the app's uninstall assignments?"""
+        for assignment in self.assignments.get(app_id, []):
+            if assignment.get("intent") != "uninstall":
+                continue
+            group = self.groups.get(assignment["target"].get("groupId", ""))
+            # "All devices", "all users" and groups the fake knows nothing about reach everyone.
+            if group is None or self._object_id(device_id) in group["members"]:
+                return True
+        return False
 
     def sync(self) -> None:
         """The devices check in: every targeted removal runs.
@@ -149,6 +165,52 @@ class FakeIntune:
             }
             for entry, owners in sorted(rows.items())
         ]
+
+    # ----------------------------------------------------------------- Entra directory
+
+    def _object_id(self, device_id: str) -> str:
+        return "obj-" + device_id
+
+    def _directory(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path.removeprefix("/beta")
+        method = request.method
+        body = json.loads(request.content) if request.content else {}
+        if path == "/devices" and method == "GET":
+            wanted = re.fullmatch(r"deviceId eq '([0-9a-f-]{36})'", request.url.params["$filter"])
+            assert wanted, "only an exact, well-formed identifier may be searched"
+            found = [
+                {"id": self._object_id(device_id)}
+                for device_id, device in self.devices.items()
+                if device["azureADDeviceId"] == wanted.group(1)
+                and device_id not in self.unregistered
+            ]
+            return httpx.Response(200, json={"value": found})
+        if path == "/groups" and method == "POST":
+            assert body["securityEnabled"] is True and body["mailEnabled"] is False
+            assert re.fullmatch(r"[A-Za-z0-9-]{1,64}", body["mailNickname"])
+            group_id = f"44444444-4444-4444-4444-{len(self.groups) + 1:012d}"
+            self.groups[group_id] = {"name": body["displayName"], "members": set()}
+            return httpx.Response(201, json={"id": group_id, **body})
+        match = re.fullmatch(r"/groups/([^/]+)/members/\$ref", path)
+        if match and method == "POST" and match.group(1) in self.groups:
+            object_id = body["@odata.id"].rsplit("/", 1)[1]
+            members = self.groups[match.group(1)]["members"]
+            if object_id in members:
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": {
+                            "code": "Request_BadRequest",
+                            "message": "One or more added object references already exist",
+                        }
+                    },
+                )
+            members.add(object_id)
+            return httpx.Response(204)
+        match = re.fullmatch(r"/groups/([^/]+)", path)
+        if match and method == "DELETE" and self.groups.pop(match.group(1), None) is not None:
+            return httpx.Response(204)
+        return httpx.Response(404, json={"error": {"code": "NotFound", "message": path}})
 
     # ----------------------------------------------------------------- remediation scripts
 
@@ -315,6 +377,9 @@ class FakeIntune:
             return httpx.Response(201)
 
         assert request.headers["authorization"] == "Bearer test-token"
+        if request.url.path.startswith(("/beta/groups", "/beta/devices")):
+            self.calls.append((request.method, request.url.path.removeprefix("/beta")))
+            return self._directory(request)
         if request.url.path.startswith("/beta/deviceManagement/"):
             self.calls.append((request.method, request.url.path.removeprefix("/beta")))
             return self._inventory(request)

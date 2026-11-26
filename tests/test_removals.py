@@ -704,3 +704,120 @@ def test_on_demand_respects_the_protected_list_and_the_option(client, tmp_path):
     with TestClient(create_app(only_inventory, auth=DemoAuth())) as off:
         off.headers["X-IAFD"] = "1"
         assert off.get("/api/config").json()["remediations"] is False
+
+
+# --------------------------------------------------------------------------- devices one by one
+
+
+def test_devices_picked_one_by_one_go_into_a_group_of_the_rule(client):
+    intune = client.app.state.intune
+    assert client.get("/api/config").json()["device_groups"] is True
+    name = "Google Chrome"
+    job = wait(
+        client,
+        client.post("/api/removals", json={"config": {"names": [name]}, "confirm": name}).json(),
+    )
+    rule_id = job["result"]["removal"]["id"]
+
+    candidates = client.get(f"/api/removals/{rule_id}/devices").json()["devices"]
+    assert len(candidates) == 7 and not any(device["chosen"] for device in candidates)
+    assert candidates[0]["version"] == "131.0.6778.86"
+    by_name = {device["name"]: device["id"] for device in candidates}
+
+    assert (
+        client.post(f"/api/removals/{rule_id}/devices", json={"device_ids": []}).json()["error"][
+            "code"
+        ]
+        == "error.removal_no_device"
+    )
+    # A device that does not have the software cannot be slipped in.
+    outsider = device_id(client, "PC-ATELIER-04")
+    assert (
+        client.post(f"/api/removals/{rule_id}/devices", json={"device_ids": [outsider]}).json()[
+            "error"
+        ]["code"]
+        == "error.removal_unknown_device"
+    )
+    assert intune.groups == {}
+
+    picked = client.post(
+        f"/api/removals/{rule_id}/devices",
+        json={"device_ids": [by_name["PC-IT-01"], by_name["PC-IT-02"]]},
+    ).json()
+    assert picked["missing"] == []
+    group_id = picked["rule"]["device_group"]["id"]
+    assert intune.groups[group_id]["name"] == "IntuneAppFastDeploy removal - Google Chrome"
+    assert len(intune.groups[group_id]["members"]) == 2
+    assert [a["target"]["groupId"] for a in intune.assignments[rule_id]] == [group_id]
+
+    # Only the two picked devices lose the software.
+    intune.sync()
+    chrome = ("Google Chrome", "131.0.6778.86", "Google LLC")
+    still = sorted(
+        intune.devices[d]["deviceName"] for d, s in intune.installed.items() if chrome in s
+    )
+    assert len(still) == 5 and "PC-IT-01" not in still and "PC-IT-02" not in still
+
+    # Picking again adds to the same group and never duplicates a member.
+    more = client.post(
+        f"/api/removals/{rule_id}/devices", json={"device_ids": [by_name["PC-COMPTA-02"]]}
+    ).json()
+    assert more["rule"]["device_group"]["id"] == group_id and len(intune.groups) == 1
+    assert len(intune.groups[group_id]["members"]) == 3
+    assert (
+        sum(d["chosen"] for d in client.get(f"/api/removals/{rule_id}/devices").json()["devices"])
+        == 1
+    )  # the two first ones no longer have the software
+
+    # Ending the rule deletes the group it created.
+    client.post(f"/api/removals/{rule_id}/finish")
+    assert intune.groups == {} and rule_id not in intune.apps
+
+
+def test_a_device_without_an_entra_object_is_reported_not_guessed(client):
+    intune = client.app.state.intune
+    name = "Zoom Workplace"
+    job = wait(
+        client,
+        client.post("/api/removals", json={"config": {"names": [name]}, "confirm": name}).json(),
+    )
+    rule_id = job["result"]["removal"]["id"]
+    candidates = {
+        d["name"]: d["id"] for d in client.get(f"/api/removals/{rule_id}/devices").json()["devices"]
+    }
+    intune.unregistered.add(candidates["LAPTOP-RH-07"])
+    picked = client.post(
+        f"/api/removals/{rule_id}/devices",
+        json={"device_ids": [candidates["LAPTOP-RH-07"], candidates["PC-IT-01"]]},
+    ).json()
+    assert picked["missing"] == ["LAPTOP-RH-07"]
+    assert [d["name"] for d in picked["rule"]["device_group"]["devices"]] == ["PC-IT-01"]
+
+
+def test_device_groups_option_and_its_permissions(client, tmp_path):
+    from iafd.config import Settings
+    from iafd.graph import Graph
+    from iafd.web import create_app
+
+    from .demo import DemoAuth
+
+    assert not Settings(enable_device_groups=True).device_groups  # needs the inventory
+    scopes = Settings(enable_device_inventory=True, enable_device_groups=True).scopes
+    assert [scope.rsplit("/", 1)[1] for scope in scopes[-2:]] == [
+        "Group.ReadWrite.All",
+        "Device.Read.All",
+    ]
+    off = Settings(
+        tenant_id="t",
+        client_id="c",
+        config_dir=tmp_path,
+        work_dir=tmp_path / "w",
+        enable_device_inventory=True,
+    )
+    with TestClient(create_app(off, auth=DemoAuth())) as without:
+        without.headers["X-IAFD"] = "1"
+        assert without.get("/api/removals/x/devices").status_code == 404
+    # Text that is not an identifier never reaches a directory filter.
+    graph = Graph(lambda: "t", "https://graph.test/beta")
+    assert graph.entra_device_object_id("x' or deviceId ne '") is None
+    graph.close()
