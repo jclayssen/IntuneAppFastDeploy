@@ -438,9 +438,11 @@ def create_app(
 
     @app.get("/locales/{language}.json")
     def locale(language: str) -> Response:
-        if language not in available_languages():
+        # The path served comes from the folder listing, never from the request.
+        path = {item.stem: item for item in LOCALES.glob("*.json")}.get(language)
+        if path is None:
             raise HTTPException(404, {"code": "error.http", "detail": ""})
-        return FileResponse(LOCALES / f"{language}.json", media_type="application/json")
+        return FileResponse(path, media_type="application/json")
 
     app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
     return app

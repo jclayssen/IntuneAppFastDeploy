@@ -120,3 +120,9 @@ def test_a_web_page_is_not_an_installer(client, monkeypatch):
     job = wait(client, response.json()["id"], {"ready", "error"})
     assert job["state"] == "error"
     assert job["error"]["code"] == "error.not_installer"
+
+
+def test_language_files_cannot_be_used_to_read_other_files(client):
+    assert client.get("/locales/fr.json").json()["_name"] == "Français"
+    for name in ("..%2F..%2Fconfig", "..%2Fstatic%2Fapp", "nope", "%2Fetc%2Fpasswd"):
+        assert client.get(f"/locales/{name}.json").status_code == 404, name
