@@ -4,7 +4,7 @@
 # rebuilt every week so the base system gets its security patches.
 FROM ghcr.io/astral-sh/uv:0.13.10 AS uv
 
-FROM python:3.13-slim AS build
+FROM python:3.15-slim AS build
 COPY --from=uv /uv /bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
@@ -13,7 +13,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable
 
-FROM python:3.13-slim
+FROM python:3.15-slim
 LABEL org.opencontainers.image.title="IntuneAppFastDeploy" \
       org.opencontainers.image.description="Publish and update MSI/EXE applications in Microsoft Intune from a download link" \
       org.opencontainers.image.licenses="MIT"
