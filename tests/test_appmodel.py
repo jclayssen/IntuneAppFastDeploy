@@ -176,3 +176,18 @@ def test_store_validates_and_persists(tmp_path):
     with pytest.raises(StoreError):
         store.set("a", "App", {"targets": [{"type": "group", "id": "not-a-guid"}]}, None)
     assert RolloutStore(tmp_path).get("unknown")["prod"]["targets"] == []
+
+
+@pytest.mark.parametrize(
+    ("name", "old", "new", "expected"),
+    [
+        ("7-Zip 23.01 (x64 edition)", "23.01.00.0", "24.08.00.0", "7-Zip 24.08 (x64 edition)"),
+        ("App 1.0", "1.0", "2.0", "App 2.0"),
+        ("App", "1.0", "2.0", "App"),
+        ("App 11.0.1", "1.0", "2.0", "App 11.0.1"),
+        ("Tool 3.2.1", "3.2.1.0", "3.3.0.0", "Tool 3.3.0"),
+        ("App 1.0", "", "2.0", "App 1.0"),
+    ],
+)
+def test_rename_for_version(name, old, new, expected):
+    assert appmodel.rename_for_version(name, old, new) == expected

@@ -338,6 +338,24 @@ def inplace_patch(existing: dict, form: dict, analysis: dict, content_version: s
 # --------------------------------------------------------------------------- form
 
 
+def rename_for_version(name: str, old_version: str, new_version: str) -> str:
+    """Replace the old version inside a display name by the new one.
+
+    "7-Zip 23.01" with versions 23.01.00.0 -> 24.08.00.0 becomes "7-Zip 24.08":
+    the name may carry only the first parts of the version.
+    """
+    old_parts, new_parts = old_version.split("."), new_version.split(".")
+    if not old_version or not new_version:
+        return name
+    for count in range(len(old_parts), 1, -1):
+        short = ".".join(old_parts[:count])
+        if count <= len(new_parts) and re.search(rf"(?<![\d.]){re.escape(short)}(?![\d.])", name):
+            return re.sub(
+                rf"(?<![\d.]){re.escape(short)}(?![\d.])", ".".join(new_parts[:count]), name
+            )
+    return name
+
+
 def propose_form(analysis: dict, existing: dict | None) -> dict:
     """Pre-fill the review form from the installer and, on update, the current app."""
     version = analysis.get("version", "")
@@ -373,8 +391,7 @@ def propose_form(analysis: dict, existing: dict | None) -> dict:
     old_version = app_version(existing)
     old_file = existing.get("setupFilePath") or ""
     name = existing.get("displayName", "")
-    if old_version and version and old_version in name:
-        name = name.replace(old_version, version)
+    name = rename_for_version(name, old_version, version)
 
     install = existing.get("installCommandLine") or ""
     if old_file and old_file in install:

@@ -13,12 +13,14 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__, appmodel, intunewin, publish
 from .analyze import analyze
+from .appmodel import FormError
 from .auth import COOKIE, Auth, AuthError, Session
 from .config import Settings
 from .download import DownloadError, adopt_upload, download
-from .graph import Graph
+from .graph import Graph, GraphError
 from .jobs import Job, JobManager, describe_error
-from .store import RolloutStore
+from .msi import MsiError
+from .store import RolloutStore, StoreError
 
 HERE = Path(__file__).parent
 STATIC = HERE / "static"
@@ -80,13 +82,17 @@ def create_app(
         )
         return JSONResponse({"error": detail}, status_code=exc.status_code)
 
-    @app.exception_handler(Exception)
-    def any_error(_: Request, exc: Exception) -> JSONResponse:
+    def known_error(_: Request, exc: Exception) -> JSONResponse:
         error = describe_error(exc)
-        status = 401 if error["code"] == "error.session_expired" else 400
-        if error["code"] in ("error.graph", "error.unexpected"):
+        status = 400
+        if error["code"] == "error.session_expired":
+            status = 401
+        elif error["code"] in ("error.graph", "error.graph_forbidden"):
             status = 502
         return JSONResponse({"error": error}, status_code=status)
+
+    for known in (FormError, StoreError, DownloadError, AuthError, GraphError, MsiError):
+        app.add_exception_handler(known, known_error)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -185,8 +191,17 @@ def create_app(
             if item["id"]:
                 item["name"] = names.get(item["id"].lower(), "")
             described.append(item)
+        older = appmodel.older_versions(relationships)
+        # Production = the configured groups, or failing that whoever had the
+        # previous version.
+        production = appmodel.stage_assignments(rollout["prod"])
+        if not production:
+            for item in older:
+                production += graph.assignments(item["targetId"])
+        wanted = {appmodel.target_key(item.get("target") or {}) for item in production}
+        assigned = {appmodel.target_key(item.get("target") or {}) for item in assignments}
+        prod_live = bool(wanted) and wanted <= assigned
         pilot_live = appmodel.stage_is_live(rollout["pilot"], assignments)
-        prod_live = appmodel.stage_is_live(rollout["prod"], assignments)
         if prod_live:
             stage = "production"
         elif pilot_live:
@@ -200,7 +215,6 @@ def create_app(
             uninstall_command=app_data.get("uninstallCommandLine", ""),
             detection=appmodel.detection_model(appmodel.app_rules(app_data)),
         )
-        older = appmodel.older_versions(relationships)
         newer = [
             item
             for item in relationships
@@ -214,7 +228,7 @@ def create_app(
             "newer": [publish._old(item) for item in newer],
             "rollout": rollout,
             "stage": stage,
-            "can_promote": stage == "pilot" and (bool(rollout["prod"]["targets"]) or bool(older)),
+            "can_promote": stage == "pilot" and bool(wanted),
         }
 
     @app.get("/api/apps/{app_id}")
