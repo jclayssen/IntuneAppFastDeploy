@@ -142,6 +142,10 @@ class Graph:
         result = self.request("GET", f"/groups/{group_id}", params={"$select": "displayName"})
         return result.get("displayName", "")
 
+    def device_statuses(self, app_id: str) -> list[dict]:
+        """Per-device install state of an app (used for removal results)."""
+        return self.get_all(f"/deviceAppManagement/mobileApps/{app_id}/deviceStatuses")
+
     # ----------------------------------------------------------------- device inventory
 
     def detected_apps(self) -> list[dict]:

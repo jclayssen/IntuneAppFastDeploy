@@ -462,13 +462,13 @@ def target_key(target: dict) -> str:
     return (target.get("groupId") or target.get("@odata.type", "")).lower()
 
 
-def assignment_for(target: dict, intent: str) -> dict:
+def assignment_for(target: dict, intent: str, notifications: str = "showAll") -> dict:
     graph_target: dict = {"@odata.type": _TARGETS[target["type"]]}
     if target["type"] == "group":
         graph_target["groupId"] = target["id"]
     settings: dict = {
         "@odata.type": "#microsoft.graph.win32LobAppAssignmentSettings",
-        "notifications": "showAll",
+        "notifications": notifications,
         "restartSettings": None,
         "installTimeSettings": None,
         "deliveryOptimizationPriority": "notConfigured",
@@ -508,6 +508,28 @@ def merge_assignments(current: list[dict], extra: list[dict]) -> list[dict]:
             seen.add(key)
             merged.append(clean_assignment(item))
     return merged
+
+
+def uninstall_assignments(targets: list[dict]) -> list[dict]:
+    """Assignments that remove the app from these targets, without a toast on the device."""
+    return [assignment_for(target, "uninstall", notifications="hideAll") for target in targets]
+
+
+def with_uninstall(current: list[dict], targets: list[dict]) -> list[dict]:
+    """Current assignments of an app, with ``targets`` switched to uninstall.
+
+    A target can only carry one intent: what it had before is replaced. Passing
+    no target removes every uninstall assignment and keeps the rest.
+    """
+    wanted = uninstall_assignments(targets)
+    replaced = {target_key(item["target"]) for item in wanted}
+    kept = [
+        clean_assignment(item)
+        for item in current
+        if target_key(item.get("target") or {}) not in replaced
+        and (targets or item.get("intent") != "uninstall")
+    ]
+    return kept + wanted
 
 
 def stage_assignments(stage: dict) -> list[dict]:

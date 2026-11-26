@@ -44,6 +44,7 @@ In scope:
 
 - the code of this repository and the published Docker image;
 - sign-in and session handling, the HTTP API, the handling of downloaded installers;
+- the removal script the tool deploys to the devices, and the list of protected software;
 - the build and publication workflows of this repository.
 
 Out of scope:
@@ -117,6 +118,7 @@ Dans le périmètre :
 
 - le code de ce dépôt et l'image Docker publiée ;
 - la connexion et la gestion des sessions, l'API HTTP, le traitement des installeurs téléchargés ;
+- le script de désinstallation que l'outil déploie sur les postes, et la liste des logiciels protégés ;
 - les workflows de construction et de publication de ce dépôt.
 
 Hors périmètre :

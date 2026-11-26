@@ -142,14 +142,15 @@ def seed_devices(intune: FakeIntune) -> None:
     teamviewer = ("TeamViewer", "15.20.6", "TeamViewer")
     zoom = ("Zoom Workplace", "6.2.11", "Zoom Video Communications, Inc.")
     weather = ("Microsoft.BingWeather", "4.53.52892.0", "Microsoft Corporation")
+    webview = ("Microsoft Edge WebView2 Runtime", "131.0.2903.70", "Microsoft Corporation")
     fleet = [
         ("PC-ACCUEIL-01", "accueil@example.test", [zip23, vlc, chrome, weather]),
         ("PC-COMPTA-02", "compta@example.test", [zip23, chrome, java, winrar]),
         ("PC-COMPTA-03", "paie@example.test", [zip19, chrome, java]),
         ("PC-DIRECTION-01", "direction@example.test", [zip23, chrome, zoom, teamviewer]),
         ("PC-ATELIER-04", "atelier@example.test", [zip19, npp79, vlc, winrar]),
-        ("PC-IT-01", "admin@example.test", [zip23, npp86, chrome, teamviewer, zoom]),
-        ("PC-IT-02", "support@example.test", [zip23, npp86, chrome, vlc]),
+        ("PC-IT-01", "admin@example.test", [zip23, npp86, chrome, teamviewer, zoom, webview]),
+        ("PC-IT-02", "support@example.test", [zip23, npp86, chrome, vlc, webview]),
         ("LAPTOP-RH-07", "rh@example.test", [zip23, chrome, zoom, weather]),
     ]
     for name, user, software in fleet:
@@ -160,6 +161,8 @@ def build():
     intune = FakeIntune()
     seed(intune)
     seed_devices(intune)
+    # WinRAR stands for an EXE whose uninstaller has no silent mode declared.
+    intune.no_silent = {"WinRAR 5.91 (64-bit)"}
     root = Path(tempfile.mkdtemp(prefix="iafd-demo-"))
     settings = Settings(
         tenant_id="demo",
@@ -169,13 +172,27 @@ def build():
         default_language="fr",
         enable_device_inventory=True,
     )
-    return create_app(
+    app = create_app(
         settings,
         graph_factory=lambda token: Graph(
             token, BASE, transport=intune.transport(), sleep=lambda _: None
         ),
         auth=DemoAuth(),
     )
+    # Tests and the screenshot script reach the simulated tenant through these.
+    app.state.intune = intune
+    app.state.settings = settings
+
+    def demo_sync() -> dict:
+        """Pretend the devices checked in with Intune (demo only)."""
+        intune.sync()
+        return {"ok": True}
+
+    # The interface is mounted on "/" and would swallow a route added after it.
+    app.add_api_route("/demo/sync", demo_sync, methods=["POST"], include_in_schema=False)
+    app.router.routes.insert(0, app.router.routes.pop())
+
+    return app
 
 
 if __name__ == "__main__":

@@ -114,6 +114,7 @@ a { color: var(--accent); }
   color: var(--muted);
 }
 .badge.ok { color: var(--ok); border-color: var(--ok); }
+.badge.failed { color: var(--danger); border-color: var(--danger); }
 .badge.pilot { color: var(--warn-text); background: var(--warn-bg); border-color: transparent; }
 .notice {
   padding: 10px 12px;
@@ -160,7 +161,16 @@ button.tab {
 button.tab:hover { color: var(--text); }
 button.tab.current { color: var(--text); border-color: var(--line); background: var(--bg); }
 .pager { margin-top: 12px; }
+.table-wrap { margin-bottom: 12px; }
+.table-wrap + .hint { margin-top: 0; }
+.topbar .tabs { gap: 2px; }
+.topbar button.tab { font-size: 14px; padding: 5px 8px; }
+.topbar #logout { padding: 5px 10px; }
 .row + .hint { margin: 8px 0 12px; }
+/* With three sections the header is full: the name moves to the sign-out tooltip. */
+@media (max-width: 1250px) {
+  #user { display: none; }
+}
 @media (max-width: 560px) {
   #user { display: none; }
   .topbar { gap: 8px; padding: 8px 12px; }

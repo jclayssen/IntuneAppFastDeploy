@@ -107,6 +107,28 @@ const PILOT = { en: "Pilot - IT team", fr: "Pilote - équipe informatique" }[lan
   await page.waitForSelector("dl.facts");
   await shot("10-device");
 
+  // 11. Removing software found on the devices: the rule form.
+  await page.locator(`#nav button:has-text("${t("nav.inventory")}")`).click();
+  await page.waitForSelector("main table");
+  await page.fill("main input[type=search]", "winrar");
+  await page.waitForFunction(() => document.querySelectorAll("main tbody tr").length === 1);
+  await page.locator("main tbody tr button.linkish").click();
+  await button("removal.start").click();
+  await page.waitForSelector(`text=${t("removal.confirm_title")}`);
+  await page.locator(`.stage button:has-text("${t("target.all_devices")}")`).click();
+  await page.locator(".panel").last().locator("input[type=text]").fill("WinRAR 5.91 (64-bit)");
+  await shot("11-removal");
+
+  // 12. The result on each device, once the devices have checked in.
+  await button("removal.publish").click();
+  await page.waitForSelector(`text=${t("removal.results")}`, { timeout: 60000 });
+  await page.request.post(`${base}/demo/sync`);
+  await page.locator(`#nav button:has-text("${t("nav.removals")}")`).click();
+  await page.waitForSelector("main table");
+  await page.locator("main tbody button.linkish").click();
+  await page.waitForSelector(".badge.failed");
+  await shot("12-removal-results");
+
   await browser.close();
 })().catch((error) => {
   console.error(error);

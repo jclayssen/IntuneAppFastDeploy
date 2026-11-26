@@ -6,6 +6,7 @@ proof that the real service accepts the same payloads.
 
 from __future__ import annotations
 
+import base64
 import itertools
 import json
 import re
@@ -28,6 +29,9 @@ class FakeIntune:
         self.fail_commit = False
         self.devices: dict[str, dict] = {}
         self.installed: dict[str, list[tuple[str, str, str]]] = {}  # device id -> software
+        self.removal_results: dict[str, dict[str, str]] = {}  # app id -> device id -> state
+        self.fail_statuses = False
+        self.no_silent: set[str] = set()
         self._ids = itertools.count(1)
 
     def add_app(self, **fields) -> dict:
@@ -63,6 +67,65 @@ class FakeIntune:
         }
         self.installed[device_id] = software
         return self.devices[device_id]
+
+    # ----------------------------------------------------------------- removals
+
+    def _removal_config(self, app: dict) -> dict | None:
+        """Settings embedded in the detection script of a removal application."""
+        for rule in app.get("rules", []):
+            if rule.get("@odata.type", "").endswith("PowerShellScriptRule"):
+                script = base64.b64decode(rule["scriptContent"]).decode("utf-8-sig")
+                match = re.search(r"\$ConfigBase64 = '([A-Za-z0-9+/=]+)'", script)
+                if match:
+                    return json.loads(base64.b64decode(match.group(1)))
+        return None
+
+    def _targeted(self, app_id: str) -> bool:
+        return any(a.get("intent") == "uninstall" for a in self.assignments.get(app_id, []))
+
+    def _removal_matches(self, app_id: str) -> list[tuple[str, tuple[str, str, str]]]:
+        config = self._removal_config(self.apps[app_id])
+        if not config or not self._targeted(app_id):
+            return []
+        names = {name.casefold() for name in config["names"]}
+        return [
+            (device_id, entry)
+            for device_id, software in self.installed.items()
+            for entry in software
+            if entry[0].casefold() in names
+        ]
+
+    def sync(self) -> None:
+        """The devices check in: every targeted removal runs.
+
+        Names listed in ``no_silent`` stand for an EXE without a silent
+        uninstaller: they stay, unless the rule carries a command.
+        """
+        for app_id in list(self.apps):
+            config = self._removal_config(self.apps[app_id])
+            for device_id, entry in self._removal_matches(app_id):
+                stubborn = entry[0] in self.no_silent and not config.get("command")
+                self.removal_results.setdefault(app_id, {})[device_id] = (
+                    "uninstallFailed" if stubborn else "notInstalled"
+                )
+                if not stubborn:
+                    self.installed[device_id] = [e for e in self.installed[device_id] if e != entry]
+
+    def _device_statuses(self, app_id: str) -> list[dict]:
+        results = dict(self.removal_results.get(app_id, {}))
+        for device_id, _ in self._removal_matches(app_id):
+            results.setdefault(device_id, "installed")  # targeted, has not checked in yet
+        return [
+            {
+                "id": f"{app_id}_{device_id}",
+                "deviceName": self.devices[device_id]["deviceName"],
+                "userPrincipalName": self.devices[device_id]["userPrincipalName"],
+                "installState": state,
+                "errorCode": -2016345060 if state == "uninstallFailed" else 0,
+                "lastSyncDateTime": "2026-11-26T09:30:00Z",
+            }
+            for device_id, state in sorted(results.items())
+        ]
 
     def _detected(self, device_id: str | None = None) -> list[dict]:
         rows: dict[tuple[str, str, str], list[str]] = {}
@@ -186,6 +249,12 @@ class FakeIntune:
                 )
             del self.apps[app_id]
             return httpx.Response(204)
+        if rest == "/deviceStatuses":
+            if self.fail_statuses:
+                return httpx.Response(
+                    400, json={"error": {"code": "BadRequest", "message": "report not available"}}
+                )
+            return httpx.Response(200, json={"value": self._device_statuses(app_id)})
         if rest == "/assignments":
             return httpx.Response(200, json={"value": self.assignments[app_id]})
         if rest == "/assign":

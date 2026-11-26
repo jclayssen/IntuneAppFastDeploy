@@ -21,7 +21,9 @@ _VERSION = re.compile(r"^\d+(\.\d+){0,3}$")
 
 
 class RemovalError(ValueError):
-    """Carries a translation key for the UI."""
+    """Carries a translation key for the UI, and sometimes a detail."""
+
+    detail = ""
 
 
 def slug(text: str) -> str:
@@ -104,6 +106,152 @@ def render_script(config: dict, mode: str) -> str:
 
 def script_file_name(config: dict) -> str:
     return f"Remove-{clean_config(config)['slug']}.ps1"
+
+
+# --------------------------------------------------------------------------- inventory
+
+
+def version_key(version: str) -> tuple[int, ...] | None:
+    """Same reading of a version as the script: leading numbers, nothing else."""
+    match = re.match(r"\s*(\d+(?:\.\d+){0,3})", version or "")
+    if not match:
+        return None
+    parts = [int(part) for part in match.group(1).split(".")]
+    return tuple(parts + [0] * (4 - len(parts)))
+
+
+def version_wanted(rule: dict, version: str) -> bool:
+    """Mirror of ``Test-VersionWanted`` in the script, to count devices before publishing."""
+    mode = rule.get("mode", "any")
+    if mode == "any":
+        return True
+    if mode == "list":
+        return version in rule.get("values", [])
+    if mode == "below":
+        installed, limit = version_key(version), version_key(str(rule.get("value", "")))
+        return installed is not None and limit is not None and installed < limit
+    return False
+
+
+def matching_installs(groups: list[dict], config: dict) -> list[dict]:
+    """Inventory rows a rule would act on: ``[{name, version, devices}]``."""
+    wanted = {name.casefold() for name in config["names"]}
+    rows = []
+    for group in groups:
+        if group["name"].casefold() not in wanted:
+            continue
+        for entry in group["versions"]:
+            if version_wanted(config["versions"], entry["version"]):
+                rows.append(
+                    {
+                        "name": group["name"],
+                        "version": entry["version"],
+                        "devices": entry["devices"],
+                    }
+                )
+    return rows
+
+
+# --------------------------------------------------------------------------- Intune objects
+
+WIN32 = "#microsoft.graph.win32LobApp"
+SCRIPT_RULE = "#microsoft.graph.win32LobAppPowerShellScriptRule"
+NAME_PREFIX = "Removal - "
+
+
+def encode_script(script: str) -> str:
+    # Windows PowerShell 5.1 needs the byte order mark to read accents correctly.
+    return base64.b64encode(script.encode("utf-8-sig")).decode("ascii")
+
+
+def detection_rule(config: dict) -> dict:
+    return {
+        "@odata.type": SCRIPT_RULE,
+        "ruleType": "detection",
+        "enforceSignatureCheck": False,
+        "runAs32Bit": False,
+        "scriptContent": encode_script(render_script(config, "Detect")),
+        "operationType": "notConfigured",
+        "operator": "notConfigured",
+        "comparisonValue": None,
+    }
+
+
+def content_fields(config: dict) -> dict:
+    """What depends on the settings: sent when creating the app and when changing a rule."""
+    config = clean_config(config)
+    file_name = script_file_name(config)
+    listed = ", ".join(config["names"])
+    return {
+        "description": (
+            f"Removes this software from the devices: {listed}. "
+            "Created by IntuneAppFastDeploy; assign it with the Uninstall intent only."
+        )[:1000],
+        "fileName": file_name.rsplit(".", 1)[0] + ".intunewin",
+        "setupFilePath": file_name,
+        # Installing does nothing: this application only exists to uninstall.
+        "installCommandLine": "cmd.exe /c exit 0",
+        "uninstallCommandLine": (
+            "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass "
+            f'-File "{file_name}" -Mode Uninstall'
+        ),
+        "installExperience": {
+            "runAsAccount": "user" if config["kind"] == "user" else "system",
+            "deviceRestartBehavior": "suppress",
+        },
+        "rules": [detection_rule(config)],
+    }
+
+
+def app_body(config: dict) -> dict:
+    config = clean_config(config)
+    body = {
+        "@odata.type": WIN32,
+        "displayName": (NAME_PREFIX + config["names"][0])[:200],
+        "publisher": "IntuneAppFastDeploy",
+        "displayVersion": "1",
+        "isFeatured": False,
+        "applicableArchitectures": "x86,x64",
+        "minimumSupportedWindowsRelease": "1607",
+        "returnCodes": [
+            {"returnCode": 0, "type": "success"},
+            {"returnCode": 3010, "type": "softReboot"},
+            {"returnCode": 1641, "type": "hardReboot"},
+        ],
+    }
+    body.update(content_fields(config))
+    return body
+
+
+STATES = {
+    "notInstalled": "removed",
+    "installed": "pending",
+    "pendingInstall": "pending",
+    "uninstallFailed": "failed",
+    "failed": "failed",
+    "notApplicable": "not_applicable",
+}
+
+
+def status_rows(statuses: list[dict]) -> dict:
+    """Per-device result of a removal, from the app's device statuses in Intune."""
+    rows = []
+    for status in statuses:
+        code = status.get("errorCode") or 0
+        rows.append(
+            {
+                "device": status.get("deviceName") or "",
+                "user": status.get("userPrincipalName") or status.get("userName") or "",
+                "state": STATES.get(status.get("installState", ""), "unknown"),
+                "error": f"0x{code & 0xFFFFFFFF:08X}" if code else "",
+                "last_sync": status.get("lastSyncDateTime") or "",
+            }
+        )
+    rows.sort(key=lambda row: (row["state"] != "failed", row["device"].casefold()))
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["state"]] = counts.get(row["state"], 0) + 1
+    return {"rows": rows, "counts": counts}
 
 
 def main(argv: list[str]) -> int:

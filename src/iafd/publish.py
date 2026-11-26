@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
 
-from . import appmodel
+from . import appmodel, intunewin, protected, removal
 from .graph import Graph, GraphError
 from .intunewin import Package
-from .store import RolloutStore
+from .store import RemovalStore, RolloutStore, clean_stage
 
 Step = Callable[[str], None]
 Progress = Callable[[int, int], None]
@@ -178,6 +180,115 @@ def promote(graph: Graph, store: RolloutStore, app_id: str) -> dict:
     merged = appmodel.merge_assignments(graph.assignments(app_id), production)
     graph.assign(app_id, merged)
     return {"assignments": len(merged)}
+
+
+# --------------------------------------------------------------------------- removals
+
+
+def removal_targets(targets: list | None) -> list[dict]:
+    """Validated targets of a removal (groups, all devices, all users)."""
+    return clean_stage({"intent": "required", "targets": targets or []})["targets"]
+
+
+def _removal_package(config: dict, work_dir: Path) -> intunewin.Package:
+    work_dir.mkdir(parents=True, exist_ok=True)
+    script = work_dir / removal.script_file_name(config)
+    script.write_text(removal.render_script(config, "Uninstall"), encoding="utf-8-sig")
+    return intunewin.build_package(script, work_dir / "pkg")
+
+
+def check_removal(raw: dict, config_dir: Path) -> dict:
+    """Validated settings; refuses protected software."""
+    config = removal.clean_config(raw)
+    refused = protected.blocked(config["names"], protected.load_extra(config_dir))
+    if refused:
+        error = removal.RemovalError("error.removal_protected")
+        error.detail = ", ".join(refused)
+        raise error
+    return config
+
+
+def publish_removal(
+    graph: Graph,
+    store: RemovalStore,
+    raw_config: dict,
+    targets: list | None,
+    permanent: bool,
+    user: str,
+    work_dir: Path,
+    config_dir: Path,
+    step: Step,
+    progress: Progress,
+) -> dict:
+    """Create the Intune application whose only job is to uninstall some software."""
+    config = check_removal(raw_config, config_dir)
+    wanted = removal_targets(targets)
+    step("step.package")
+    package = _removal_package(config, work_dir)
+    step("step.create")
+    app_id = graph.create_app(removal.app_body(config))["id"]
+    try:
+        step("step.upload")
+        version = graph.upload_content(app_id, package, progress)
+        step("step.commit")
+        graph.patch_app(app_id, {"@odata.type": appmodel.WIN32, "committedContentVersion": version})
+        if wanted:
+            step("step.assign")
+            graph.assign(app_id, appmodel.uninstall_assignments(wanted))
+    except Exception:
+        _discard(graph, app_id)
+        raise
+    rule = {
+        "id": app_id,
+        "app_id": app_id,
+        "label": config["names"][0],
+        "config": config,
+        "targets": wanted,
+        "permanent": bool(permanent),
+        "created_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "created_by": user,
+    }
+    return store.save(rule)
+
+
+def update_removal(
+    graph: Graph,
+    store: RemovalStore,
+    rule: dict,
+    raw_config: dict,
+    work_dir: Path,
+    config_dir: Path,
+    step: Step,
+    progress: Progress,
+) -> dict:
+    """Change what a rule removes or how: new script, same application and targets."""
+    config = check_removal(raw_config, config_dir)
+    step("step.package")
+    package = _removal_package(config, work_dir)
+    step("step.upload")
+    version = graph.upload_content(rule["app_id"], package, progress)
+    step("step.commit")
+    patch = {"@odata.type": appmodel.WIN32, "committedContentVersion": version}
+    patch.update(removal.content_fields(config))
+    graph.patch_app(rule["app_id"], patch)
+    return store.save({**rule, "config": config, "label": config["names"][0]})
+
+
+def retarget_removal(graph: Graph, store: RemovalStore, rule: dict, targets: list | None) -> dict:
+    wanted = removal_targets(targets)
+    graph.assign(rule["app_id"], appmodel.uninstall_assignments(wanted))
+    return store.save({**rule, "targets": wanted})
+
+
+def finish_removal(graph: Graph, store: RemovalStore, rule: dict) -> None:
+    """Stop a rule: no device is targeted any more and its Intune application is deleted."""
+    try:
+        graph.assign(rule["app_id"], [])
+        graph.delete_app(rule["app_id"])
+    except GraphError as exc:
+        if exc.status != 404:  # already deleted in the portal: nothing left to clean
+            raise
+    store.delete(rule["id"])
 
 
 def _old(item: dict, error: Exception | None = None) -> dict:

@@ -56,6 +56,59 @@ def clean_stage(stage: dict | None) -> dict:
     return {"intent": intent, "targets": targets}
 
 
+class RemovalStore:
+    """Removal rules created by the tool, in ``config/removals.json``.
+
+    Nothing about them is written in Intune beyond the objects they need: this
+    file is how the tool knows which Intune applications are its own rules.
+    """
+
+    def __init__(self, config_dir: Path) -> None:
+        self.path = config_dir / "removals.json"
+        self._lock = threading.Lock()
+
+    def _read(self) -> dict:
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {"rules": {}}
+        except (OSError, json.JSONDecodeError) as exc:
+            raise StoreError("error.config_unreadable") from exc
+        data.setdefault("rules", {})
+        return data
+
+    def _write(self, data: dict) -> None:
+        tmp = self.path.with_suffix(".tmp")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            os.replace(tmp, self.path)
+        except OSError as exc:
+            raise StoreError("error.config_not_writable") from exc
+
+    def all(self) -> list[dict]:
+        with self._lock:
+            rules = list(self._read()["rules"].values())
+        return sorted(rules, key=lambda rule: rule.get("label", "").casefold())
+
+    def get(self, rule_id: str) -> dict | None:
+        with self._lock:
+            return self._read()["rules"].get(rule_id)
+
+    def save(self, rule: dict) -> dict:
+        with self._lock:
+            data = self._read()
+            data["rules"][rule["id"]] = rule
+            self._write(data)
+        return rule
+
+    def delete(self, rule_id: str) -> None:
+        with self._lock:
+            data = self._read()
+            if data["rules"].pop(rule_id, None) is not None:
+                self._write(data)
+
+
 class RolloutStore:
     def __init__(self, config_dir: Path) -> None:
         self.path = config_dir / "rollout.json"

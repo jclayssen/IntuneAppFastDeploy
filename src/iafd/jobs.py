@@ -16,6 +16,7 @@ from .auth import AuthError
 from .download import DownloadError
 from .graph import GraphError
 from .msi import MsiError
+from .removal import RemovalError
 from .store import StoreError
 
 JOB_TTL = 6 * 3600
@@ -61,6 +62,8 @@ def describe_error(exc: Exception) -> dict:
     """Map an exception to a translation key plus technical detail."""
     if isinstance(exc, DownloadError | AuthError):
         return {"code": exc.code, "detail": exc.detail}
+    if isinstance(exc, RemovalError):
+        return {"code": str(exc), "detail": exc.detail}
     if isinstance(exc, FormError | StoreError):
         return {"code": str(exc), "detail": ""}
     if isinstance(exc, MsiError):
