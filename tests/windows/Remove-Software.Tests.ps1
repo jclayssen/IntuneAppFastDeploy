@@ -269,8 +269,8 @@ Describe 'Real software' {
         $install.ExitCode | Should -Be 0
         $entry = Get-InstalledEntry -Like 'Notepad++*'
         $entry | Should -Not -BeNullOrEmpty
-        $program = Join-Path $entry.PSObject.Properties['InstallLocation'].Value 'notepad++.exe'
-        if (-not (Test-Path $program)) { $program = 'C:\Program Files\Notepad++\notepad++.exe' }
+        # This installer does not record where it installed: use the folder of its uninstaller.
+        $program = Join-Path (Split-Path -Parent $entry.UninstallString.Trim('"')) 'notepad++.exe'
         Test-Path $program | Should -BeTrue
 
         # This installer declares no silent command: the script must refuse to guess...
