@@ -70,6 +70,8 @@ def seed(intune: FakeIntune) -> None:
         }
     ]
     current["isAssigned"] = True
+    old["supersededAppCount"] = 1
+    current["description"] = "File archiver with a high compression ratio."
     intune.add_app(
         displayName="Notepad++",
         displayVersion="8.6.0",
@@ -90,6 +92,39 @@ def seed(intune: FakeIntune) -> None:
             }
         ],
     )
+
+    # A few more rows so the list looks like a real tenant in screenshots.
+    for name, version, publisher, file, assigned in (
+        ("VLC media player", "3.0.20", "VideoLAN", "vlc-3.0.20-win64.msi", True),
+        ("Mozilla Firefox ESR", "115.9.0", "Mozilla", "Firefox Setup 115.9.0esr.msi", False),
+    ):
+        app = intune.add_app(
+            displayName=name,
+            displayVersion=version,
+            publisher=publisher,
+            setupFilePath=file,
+            installCommandLine=f'msiexec /i "{file}" /qn /norestart',
+            uninstallCommandLine='msiexec /x "{00000000-0000-0000-0000-000000000000}" /qn',
+            isAssigned=assigned,
+            rules=[
+                {
+                    "@odata.type": appmodel.RULE_PRODUCT,
+                    "ruleType": "detection",
+                    "productCode": "{00000000-0000-0000-0000-000000000000}",
+                    "productVersionOperator": "notConfigured",
+                    "productVersion": None,
+                }
+            ],
+        )
+        if assigned:
+            intune.assignments[app["id"]] = [
+                {
+                    "id": "a",
+                    "intent": "available",
+                    "settings": None,
+                    "target": {"@odata.type": "#microsoft.graph.allLicensedUsersAssignmentTarget"},
+                }
+            ]
 
 
 def build():

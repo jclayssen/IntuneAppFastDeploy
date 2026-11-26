@@ -10,6 +10,7 @@ Vous collez le lien du nouvel installeur, l'outil le télécharge, lit ce qu'il 
 
 ## Sommaire
 
+- [Aperçu](#aperçu)
 - [Ce que fait l'outil](#ce-que-fait-loutil)
 - [Ce qu'il vous faut](#ce-quil-vous-faut)
 - [Étape 1 — Créer l'inscription d'application dans Microsoft Entra ID](#étape-1--créer-linscription-dapplication-dans-microsoft-entra-id)
@@ -25,6 +26,47 @@ Vous collez le lien du nouvel installeur, l'outil le télécharge, lit ce qu'il 
 - [Limites](#limites)
 - [Développement](#développement)
 - [Ajouter une langue](#ajouter-une-langue)
+
+## Aperçu
+
+Ces écrans viennent de la démonstration intégrée, qui tourne face à un Intune simulé avec des applications d'exemple.
+
+**La liste de vos applications Win32**, avec leur version et leur état. *Mettre à jour* part d'ici.
+
+<img src="docs/screenshots/fr/02-applications.png" alt="Liste des applications Win32 avec version, éditeur, état et bouton Mettre à jour" width="780">
+
+**1. Donnez le lien** du nouvel installeur, ou choisissez un fichier.
+
+<img src="docs/screenshots/fr/04-link.png" alt="Écran de mise à jour avec un champ pour le lien de téléchargement et un sélecteur de fichier" width="780">
+
+**2. Vérifiez avant de publier.** Le nom, la version, les commandes et la règle de détection sont pré-remplis à partir de l'application déjà présente dans Intune ; vous choisissez la méthode de mise à jour et qui reçoit la nouvelle version en premier.
+
+<img src="docs/screenshots/fr/05-review.png" alt="Écran de vérification montrant ce qui a été détecté dans le fichier, les réglages de l'application, la règle de détection et la méthode de mise à jour" width="780">
+
+**3. Publié.**
+
+<img src="docs/screenshots/fr/06-published.png" alt="Confirmation que la nouvelle version a été créée dans Intune et remplace la précédente" width="780">
+
+**Pilote, puis production.** La nouvelle version n'est affectée qu'aux groupes pilotes ; *Passer en production* ajoute les groupes de production.
+
+<img src="docs/screenshots/fr/07-pilot.png" alt="Page d'une application en phase pilote, avec les groupes pilote et production et le bouton Passer en production" width="780">
+
+<details>
+<summary>Autres écrans : connexion, une application en production, une nouvelle application</summary>
+
+**Connexion** avec votre propre compte administrateur Intune.
+
+<img src="docs/screenshots/fr/01-sign-in.png" alt="Page de connexion avec un bouton Se connecter avec Microsoft" width="780">
+
+**Une application en production**, avec ses affectations et ses groupes pilote et production.
+
+<img src="docs/screenshots/fr/03-application.png" alt="Page d'une application montrant la version, les commandes, la version précédente, les affectations et les groupes" width="780">
+
+**Une nouvelle application** à partir d'un installeur EXE : vous renseignez une fois la commande de désinstallation et la règle de détection.
+
+<img src="docs/screenshots/fr/08-new-application.png" alt="Écran de vérification pour une nouvelle application à partir d'un installeur EXE" width="780">
+
+</details>
 
 ## Ce que fait l'outil
 
@@ -342,6 +384,16 @@ Organisation :
 | `src/iafd/graph.py`, `publish.py` | Appels Microsoft Graph et enchaînements de publication |
 | `src/iafd/auth.py`, `web.py`, `jobs.py`, `store.py` | Connexion, API HTTP, tâches de fond, configuration locale |
 | `src/iafd/static/`, `src/iafd/locales/` | Interface et ses textes |
+
+Régénérer les captures d'écran du README après un changement d'interface (demande Node.js et Playwright ; relancez la démonstration avant chaque langue pour repartir des mêmes données) :
+
+```bash
+node docs/screenshots/make.js en
+```
+
+```bash
+node docs/screenshots/make.js fr
+```
 
 ### Référence Microsoft Graph
 
