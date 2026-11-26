@@ -239,7 +239,7 @@ async function showApps() {
                   "td",
                   {},
                   h("span", { class: `badge ${app.assigned ? "ok" : ""}` }, t(app.assigned ? "apps.assigned" : "apps.unassigned")),
-                  app.superseding_count ? [" ", h("span", { class: "badge" }, t("apps.superseded"))] : null,
+                  app.superseded_count ? [" ", h("span", { class: "badge" }, t("apps.superseded"))] : null,
                 ),
                 h("td", { class: "actions" }, button(t("action.update"), () => showWizard(app.id), "small")),
               ),

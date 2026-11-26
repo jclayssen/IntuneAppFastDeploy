@@ -31,6 +31,9 @@ READ_ONLY = {
     "size",
     "detectionRules",
     "requirementRules",
+    # References to scripts stored on the original app: a copy cannot reuse them.
+    "activeInstallScript",
+    "activeUninstallScript",
 }
 
 DEFAULT_RETURN_CODES = [
@@ -463,11 +466,25 @@ def assignment_for(target: dict, intent: str) -> dict:
     graph_target: dict = {"@odata.type": _TARGETS[target["type"]]}
     if target["type"] == "group":
         graph_target["groupId"] = target["id"]
+    settings: dict = {
+        "@odata.type": "#microsoft.graph.win32LobAppAssignmentSettings",
+        "notifications": "showAll",
+        "restartSettings": None,
+        "installTimeSettings": None,
+        "deliveryOptimizationPriority": "notConfigured",
+    }
+    if intent == "available":
+        # Without this, people who installed an "available" app from the
+        # Company Portal would stay on the superseded version.
+        settings["autoUpdateSettings"] = {
+            "@odata.type": "#microsoft.graph.win32LobAppAutoUpdateSettings",
+            "autoUpdateSupersededAppsState": "enabled",
+        }
     return {
         "@odata.type": ASSIGNMENT,
         "intent": intent,
         "target": graph_target,
-        "settings": None,
+        "settings": settings,
     }
 
 

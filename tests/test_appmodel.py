@@ -191,3 +191,35 @@ def test_store_validates_and_persists(tmp_path):
 )
 def test_rename_for_version(name, old, new, expected):
     assert appmodel.rename_for_version(name, old, new) == expected
+
+
+def test_new_assignments_use_win32_settings_and_available_ones_follow_supersedence():
+    required = appmodel.assignment_for({"type": "allDevices"}, "required")
+    assert required["settings"]["@odata.type"] == "#microsoft.graph.win32LobAppAssignmentSettings"
+    assert "autoUpdateSettings" not in required["settings"]
+    available = appmodel.assignment_for({"type": "group", "id": "g"}, "available")
+    assert available["target"]["groupId"] == "g"
+    assert available["settings"]["autoUpdateSettings"]["autoUpdateSupersededAppsState"] == "enabled"
+
+
+def test_clone_drops_read_only_and_script_references():
+    existing = {
+        "id": "a",
+        "displayName": "App",
+        "displayVersion": "1.0",
+        "size": 5,
+        "committedContentVersion": "3",
+        "isAssigned": True,
+        "publishingState": "published",
+        "activeInstallScript": {"targetId": "s"},
+        "detectionRules": [],
+        "notes": "n",
+        "setupFilePath": "setup-1.0.exe",
+        "installCommandLine": '"setup-1.0.exe" /S',
+        "uninstallCommandLine": "u",
+        "rules": [file_rule()],
+    }
+    form = appmodel.propose_form(exe_analysis(), existing)
+    body = appmodel.clone_app_body(existing, form, exe_analysis())
+    assert not set(body) & appmodel.READ_ONLY
+    assert body["notes"] == "n"

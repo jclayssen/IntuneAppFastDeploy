@@ -149,6 +149,7 @@ class FakeIntune:
             return httpx.Response(200, json=self.files[app_id])
         if rest == f"{content}/1/files/file-1/commit":
             info = body["fileEncryptionInfo"]
+            assert info.pop("@odata.type") == "microsoft.graph.fileEncryptionInfo"
             assert set(info) == {
                 "encryptionKey",
                 "macKey",

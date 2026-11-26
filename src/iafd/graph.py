@@ -184,7 +184,14 @@ class Graph:
         sas_uri = self._wait_file(file_url, "azureStorageUriRequest")["azureStorageUri"]
         self._upload_blocks(package.encrypted_path, sas_uri, file_url, progress)
         self.request(
-            "POST", f"{file_url}/commit", json={"fileEncryptionInfo": package.encryption_info()}
+            "POST",
+            f"{file_url}/commit",
+            json={
+                "fileEncryptionInfo": {
+                    "@odata.type": "microsoft.graph.fileEncryptionInfo",
+                    **package.encryption_info(),
+                }
+            },
         )
         self._wait_file(file_url, "commitFile")
         return version

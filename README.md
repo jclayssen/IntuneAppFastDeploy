@@ -6,7 +6,7 @@ Publish and update Windows applications (MSI / EXE) in Microsoft Intune from a d
 
 You paste the link of the new installer, the tool downloads it, reads what it can from the file, pre-fills everything from the application that already exists in Intune, and you click **Publish**. Nothing is sent to Intune before you confirm.
 
-> **Project status: beta.** The packaging, the workflows and the interface are covered by automated tests, but against a simulated Intune. Do your first publication on an unimportant application and check the result in the Intune portal. If something fails, the **Download the .intunewin** button gives you a package you can upload by hand.
+> **Project status: beta.** The packaging, the workflows and the interface are covered by automated tests, and the requests sent to Intune were checked against Microsoft's API documentation, but the tests run against a simulated Intune, not a real tenant. Do your first publication on an unimportant application and check the result in the Intune portal. If something fails, the **Download the .intunewin** button gives you a package you can upload by hand.
 
 ## Contents
 
@@ -331,6 +331,10 @@ Layout:
 | `src/iafd/graph.py`, `publish.py` | Microsoft Graph calls and the publishing workflows |
 | `src/iafd/auth.py`, `web.py`, `jobs.py`, `store.py` | Sign-in, HTTP API, background tasks, local configuration |
 | `src/iafd/static/`, `src/iafd/locales/` | Interface and its texts |
+
+### Microsoft Graph reference
+
+The tool uses the beta endpoint of Microsoft Graph. Pages the code was checked against: [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta).
 
 ## Adding a language
 
