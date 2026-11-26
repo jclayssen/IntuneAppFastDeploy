@@ -25,6 +25,29 @@ jobs:
       - name: Tests
         run: uv run pytest -q
 
+  windows-scripts:
+    # The removal script only means something on Windows: run it there for real,
+    # against fake software and two real installers.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.4.0
+      - name: Install the locked dependencies
+        run: uv sync --frozen
+      - name: Removal script on Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Install-Module Pester -MinimumVersion 5.5.0 -Force -SkipPublisherCheck -Scope CurrentUser
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          Import-Module Pester -MinimumVersion 5.5.0
+          $configuration = New-PesterConfiguration
+          $configuration.Run.Path = 'tests/windows'
+          $configuration.Run.Exit = $true
+          $configuration.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $configuration
+
   image:
     runs-on: ubuntu-latest
     steps:
