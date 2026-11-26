@@ -112,11 +112,30 @@ def script_file_name(config: dict) -> str:
 
 
 def version_key(version: str) -> tuple[int, ...] | None:
-    """Same reading of a version as the script: leading numbers, nothing else."""
-    match = re.match(r"\s*(\d+(?:\.\d+){0,3})", version or "")
-    if not match:
+    """Same reading of a version as the script: leading numbers, nothing else.
+
+    "8.0.2010.9" -> (8, 0, 2010, 9); "1.2 beta" -> (1, 2, 0, 0); "beta" -> None.
+    Read character by character: the text comes from the inventory, and a
+    regular expression here would be one more thing to prove harmless.
+    """
+    text = (version or "").lstrip()
+    parts: list[int] = []
+    position = 0
+    while len(parts) < 4:
+        end = position
+        while end < len(text) and text[end] in "0123456789":
+            end += 1
+        if end == position:
+            break
+        if end - position > 9:
+            return None  # not a version number
+        parts.append(int(text[position:end]))
+        if end < len(text) and text[end] == ".":
+            position = end + 1
+        else:
+            break
+    if not parts:
         return None
-    parts = [int(part) for part in match.group(1).split(".")]
     return tuple(parts + [0] * (4 - len(parts)))
 
 
