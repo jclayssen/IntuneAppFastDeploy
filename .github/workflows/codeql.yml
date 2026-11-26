@@ -20,7 +20,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [python, javascript-typescript]
+        # "actions" analyses the workflow files themselves.
+        language: [python, javascript-typescript, actions]
     steps:
       - uses: actions/checkout@v7
       - uses: github/codeql-action/init@v4

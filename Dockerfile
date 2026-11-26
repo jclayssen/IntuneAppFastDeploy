@@ -22,7 +22,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     CONFIG_DIR=/config \
     WORK_DIR=/tmp/iafd
-# Any unprivileged user works: compose.yaml runs the container as the owner of
+# Any unprivileged user works: docker-compose.yml runs the container as the owner of
 # the config folder so the files written there stay yours.
 USER 10001:10001
 EXPOSE 8080

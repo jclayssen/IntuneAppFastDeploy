@@ -123,6 +123,7 @@ def create_app(
             "group_picker": settings.enable_group_picker,
             "max_download_mb": settings.max_download_mb,
             "redirect_uri": auth.redirect_uri,
+            "config_writable": store.writable(),
         }
 
     @app.get("/auth/login")
