@@ -107,6 +107,26 @@ def test_matching_installs_follows_the_version_rule():
     assert not removal.version_wanted({"mode": "below", "value": "8.0"}, "unknown")
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("8.0.2010.9", (8, 0, 2010, 9)),
+        ("  23.01", (23, 1, 0, 0)),
+        ("1.2 beta", (1, 2, 0, 0)),
+        ("1.2.3.4.5", (1, 2, 3, 4)),
+        ("7", (7, 0, 0, 0)),
+        ("1..2", (1, 0, 0, 0)),
+        ("1.x", (1, 0, 0, 0)),
+        ("beta", None),
+        ("v1.0", None),
+        ("", None),
+        ("9" * 5000, None),
+    ],
+)
+def test_version_key_reads_leading_numbers_only(text, expected):
+    assert removal.version_key(text) == expected
+
+
 def test_removal_application_only_knows_how_to_uninstall():
     body = removal.app_body({"names": ["Zoom Workplace"], "kind": "user"})
     assert body["displayName"] == "Removal - Zoom Workplace"
