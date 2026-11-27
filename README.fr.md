@@ -489,6 +489,7 @@ En dehors de `environment:`, trois autres lignes de `docker-compose.yml` peuvent
 - **Aucune télémétrie.** L'outil ne contacte que Microsoft (connexion, Microsoft Graph, le stockage Azure désigné par Intune pour l'envoi) et les liens de téléchargement que vous lui donnez.
 - **Rien de votre tenant ne quitte votre machine ni n'est stocké dans ce dépôt.** Vos identifiants sont dans votre propre copie de `docker-compose.yml`, et vos groupes dans votre dossier `config`.
 - **Aucun mot de passe ni secret n'est stocké.** La connexion utilise le flux par code d'autorisation avec PKCE ; les jetons restent en mémoire.
+- **Le journal du serveur ne contient aucune donnée de connexion.** Chaque requête y est notée avec sa méthode, son chemin et le code de réponse, jamais avec ses paramètres : le code d'autorisation et les identifiants de compte que Microsoft renvoie à la connexion ne sont pas écrits dans `docker compose logs`.
 - **Droits délégués uniquement.** Chaque action est faite au nom de la personne connectée et apparaît à son nom dans les journaux d'audit Intune.
 - **Les installeurs sont téléchargés par le serveur.** Toute personne qui peut se connecter peut faire télécharger une URL au serveur, y compris interne : réservez l'accès aux administrateurs.
 - Le conteneur tourne avec un utilisateur non privilégié, toutes les capacités Linux retirées.
@@ -567,6 +568,7 @@ Organisation :
 | `src/iafd/inventory.py` | Regroupement, recherche et pagination de l'inventaire des postes |
 | `src/iafd/removal.py`, `protected.py`, `scripts/Remove-Software.ps1` | Règles de désinstallation, liste protégée et script exécuté sur les postes |
 | `src/iafd/auth.py`, `web.py`, `jobs.py`, `store.py` | Connexion, API HTTP, tâches de fond, configuration locale |
+| `src/iafd/accesslog.py` | Journal d'accès du serveur, sans les paramètres des requêtes |
 | `src/iafd/static/`, `src/iafd/locales/` | Interface et ses textes |
 
 Régénérer les captures d'écran du README après un changement d'interface (demande Node.js et Playwright ; relancez la démonstration avant chaque langue pour repartir des mêmes données) :
