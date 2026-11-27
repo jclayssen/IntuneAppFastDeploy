@@ -1,10 +1,13 @@
 """Run the interface against the in-memory fake Intune, with sign-in bypassed.
 
 For development and screenshots only:  uv run python -m tests.demo
+
+It listens on port 8080; set ``PORT`` to use another one.
 """
 
 from __future__ import annotations
 
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -198,4 +201,6 @@ def build():
 
 
 if __name__ == "__main__":
-    uvicorn.run(build(), host="127.0.0.1", port=8080, log_level="warning")
+    uvicorn.run(
+        build(), host="127.0.0.1", port=int(os.environ.get("PORT", "8080")), log_level="warning"
+    )

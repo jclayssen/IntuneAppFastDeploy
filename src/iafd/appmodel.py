@@ -47,6 +47,11 @@ DEFAULT_RETURN_CODES = [
 ]
 
 ARCHITECTURES = {"x64": "x64", "x86": "x86", "arm64": "arm64", "any": "x86,x64"}
+RUN_AS = ("system", "user")  # runAsAccountType
+DEFAULT_INSTALL_EXPERIENCE = {
+    "runAsAccount": "system",
+    "deviceRestartBehavior": "basedOnReturnCode",
+}
 
 _GUID = re.compile(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}")
 _LEGACY_TYPES = {
@@ -73,6 +78,11 @@ class FormError(ValueError):
 
 def app_version(app: dict) -> str:
     return app.get("displayVersion") or (app.get("msiInformation") or {}).get("productVersion", "")
+
+
+def run_as_of(app: dict) -> str:
+    """The account an app installs under; Intune's own default is the system."""
+    return (app.get("installExperience") or {}).get("runAsAccount") or "system"
 
 
 def summarize(app: dict) -> dict:
@@ -315,6 +325,24 @@ def _with_replace(rules: list[dict], form: dict) -> list[dict]:
     return rules
 
 
+def _install_experience(form: dict, existing: dict | None) -> dict | None:
+    """The install experience to send, or None when the form changes nothing.
+
+    Graph replaces the whole object, so what the form does not cover is copied
+    from the existing app.
+    """
+    current = (existing or {}).get("installExperience") or DEFAULT_INSTALL_EXPERIENCE
+    wanted = dict(current)
+    run_as = form.get("run_as")
+    if run_as not in (None, ""):
+        if run_as not in RUN_AS:
+            raise FormError("error.bad_run_as")
+        wanted["runAsAccount"] = run_as
+    if existing is not None and wanted == current:
+        return None
+    return wanted
+
+
 def new_app_body(form: dict, analysis: dict) -> dict:
     name = _require(form, "display_name", "error.name_required")
     body = {
@@ -322,10 +350,7 @@ def new_app_body(form: dict, analysis: dict) -> dict:
         "description": str(form.get("description") or "").strip() or name,
         "publisher": _require(form, "publisher", "error.publisher_required"),
         "isFeatured": False,
-        "installExperience": {
-            "runAsAccount": "user" if form.get("run_as") == "user" else "system",
-            "deviceRestartBehavior": "basedOnReturnCode",
-        },
+        "installExperience": _install_experience(form, None),
         "applicableArchitectures": ARCHITECTURES.get(form.get("architecture", "any"), "x86,x64"),
         "minimumSupportedWindowsRelease": "1607",
         "returnCodes": copy.deepcopy(DEFAULT_RETURN_CODES),
@@ -345,6 +370,9 @@ def clone_app_body(existing: dict, form: dict, analysis: dict) -> dict:
         value = str(form.get(key) or "").strip()
         if value:
             body[key] = value
+    experience = _install_experience(form, existing)
+    if experience is not None:
+        body["installExperience"] = experience
     if not body.get("largeIcon"):
         body.pop("largeIcon", None)
     return body
@@ -359,6 +387,9 @@ def inplace_patch(existing: dict, form: dict, analysis: dict, content_version: s
         value = str(form.get(key) or "").strip()
         if value:
             patch[key] = value
+    experience = _install_experience(form, existing)
+    if experience is not None:
+        patch["installExperience"] = experience
     return patch
 
 
@@ -466,6 +497,7 @@ def propose_form(analysis: dict, existing: dict | None) -> dict:
         "version": version,
         "install_command": install,
         "uninstall_command": uninstall,
+        "run_as": run_as_of(existing),
         "detection": detection,
         "warnings": warnings,
         "current_version": old_version,
@@ -556,8 +588,12 @@ def with_uninstall(current: list[dict], targets: list[dict]) -> list[dict]:
     return kept + wanted
 
 
-def stage_assignments(stage: dict) -> list[dict]:
-    return [assignment_for(target, stage["intent"]) for target in stage.get("targets", [])]
+def stage_assignments(stage: dict, notifications: str = "showAll") -> list[dict]:
+    """Assignments of a stage; ``notifications`` is what the people on the devices see."""
+    return [
+        assignment_for(target, stage["intent"], notifications)
+        for target in stage.get("targets", [])
+    ]
 
 
 def stage_is_live(stage: dict, assignments: list[dict]) -> bool:
@@ -573,7 +609,12 @@ def describe_assignment(assignment: dict) -> dict:
     simple = next((key for key, value in _TARGETS.items() if value == kind), "other")
     if kind == "#microsoft.graph.exclusionGroupAssignmentTarget":
         simple = "exclusion"
-    return {"intent": assignment.get("intent", ""), "type": simple, "id": target.get("groupId")}
+    return {
+        "intent": assignment.get("intent", ""),
+        "type": simple,
+        "id": target.get("groupId"),
+        "notifications": (assignment.get("settings") or {}).get("notifications"),
+    }
 
 
 def older_versions(relationships: list[dict]) -> list[dict]:

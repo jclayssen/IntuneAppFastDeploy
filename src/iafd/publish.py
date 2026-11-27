@@ -9,7 +9,7 @@ from pathlib import Path
 from . import appmodel, intunewin, protected, removal
 from .graph import Graph, GraphError
 from .intunewin import Package
-from .store import RemovalStore, RolloutStore, clean_stage
+from .store import RemovalStore, RolloutStore, clean_notifications, clean_stage
 
 Step = Callable[[str], None]
 Progress = Callable[[int, int], None]
@@ -23,15 +23,25 @@ def _initial_assignments(
     ``pilot``: the pilot groups only. ``prod``: the production groups, or when
     none are configured the same assignments as the previous version.
     """
+    notifications = config["notifications"]
     if rollout == "pilot":
-        return appmodel.stage_assignments(config["pilot"])
+        return appmodel.stage_assignments(config["pilot"], notifications)
     if rollout == "prod":
-        assignments = appmodel.stage_assignments(config["pilot"])
-        production = appmodel.stage_assignments(config["prod"])
+        assignments = appmodel.stage_assignments(config["pilot"], notifications)
+        production = appmodel.stage_assignments(config["prod"], notifications)
         if not production and previous_app_id:
+            # Copied as they are, with the settings they have in Intune.
             production = graph.assignments(previous_app_id)
         return appmodel.merge_assignments(assignments, production)
     return []
+
+
+def check_rollout(form: dict, new_app: bool) -> None:
+    """Refuse a badly formed rollout before anything is created in Intune."""
+    clean_notifications(form.get("notifications"))
+    if new_app:
+        clean_stage(form.get("pilot"))
+        clean_stage(form.get("prod"))
 
 
 def publish_new(
@@ -44,6 +54,7 @@ def publish_new(
     progress: Progress,
 ) -> dict:
     body = appmodel.new_app_body(form, analysis)
+    check_rollout(form, new_app=True)
     step("step.create")
     app = graph.create_app(body)
     app_id = app["id"]
@@ -55,7 +66,9 @@ def publish_new(
     except Exception:
         _discard(graph, app_id)
         raise
-    config = store.set(app_id, body["displayName"], form.get("pilot"), form.get("prod"))
+    config = store.set(
+        app_id, body["displayName"], form.get("pilot"), form.get("prod"), form.get("notifications")
+    )
     assignments = _initial_assignments(graph, form.get("rollout", "none"), config, None)
     if assignments:
         step("step.assign")
@@ -77,6 +90,7 @@ def publish_supersede(
     """Create a new app that supersedes ``current`` and keep at most two versions."""
     current_id = current["id"]
     body = appmodel.clone_app_body(current, form, analysis)
+    check_rollout(form, new_app=False)
     current_relationships = graph.relationships(current_id)
     step("step.create")
     app = graph.create_app(body)
@@ -109,6 +123,15 @@ def publish_supersede(
         raise
 
     config = store.get(current_id)
+    if clean_notifications(form.get("notifications")) not in (None, config["notifications"]):
+        # Saved on the current app first: the record then moves to the new version.
+        config = store.set(
+            current_id,
+            config["name"] or current.get("displayName", ""),
+            config["pilot"],
+            config["prod"],
+            form["notifications"],
+        )
     assignments = _initial_assignments(graph, form.get("rollout", "prod"), config, current_id)
     if assignments:
         step("step.assign")
@@ -171,7 +194,7 @@ def promote(graph: Graph, store: RolloutStore, app_id: str) -> dict:
     version are used.
     """
     config = store.get(app_id)
-    production = appmodel.stage_assignments(config["prod"])
+    production = appmodel.stage_assignments(config["prod"], config["notifications"])
     if not production:
         for item in appmodel.older_versions(graph.relationships(app_id)):
             production += graph.assignments(item["targetId"])

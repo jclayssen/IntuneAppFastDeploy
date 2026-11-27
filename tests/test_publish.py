@@ -4,7 +4,7 @@ import pytest
 
 from iafd import appmodel, intunewin, publish
 from iafd.graph import Graph, GraphError
-from iafd.store import RolloutStore
+from iafd.store import RolloutStore, StoreError
 
 from .fake_intune import BASE, FakeIntune
 
@@ -262,5 +262,212 @@ def test_incomplete_form_is_refused_before_anything_is_sent(intune, graph, store
     form["uninstall_command"] = ""
     seen, step, progress = steps()
     with pytest.raises(appmodel.FormError):
+        publish.publish_new(graph, store, package, analysis, form, step, progress)
+    assert intune.calls == []
+
+
+# --------------------------------------------------------------------------- install context
+
+
+def user_context():
+    return {"runAsAccount": "user", "deviceRestartBehavior": "suppress", "maxRunTimeInMinutes": 90}
+
+
+def test_new_app_is_created_in_the_chosen_install_context(intune, graph, store, package):
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, None)
+    form["run_as"] = "user"
+    seen, step, progress = steps()
+    outcome = publish.publish_new(graph, store, package, analysis, form, step, progress)
+    assert intune.apps[outcome["app_id"]]["installExperience"]["runAsAccount"] == "user"
+
+
+def test_supersede_keeps_the_install_context_of_the_current_app(intune, graph, store, package):
+    current = existing_app(intune, installExperience=user_context())
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, current)
+    assert form["run_as"] == "user"
+    form.update(mode="supersede", rollout="none")
+    seen, step, progress = steps()
+    outcome = publish.publish_supersede(
+        graph, store, package, analysis, form, current, step, progress
+    )
+    assert intune.apps[outcome["app_id"]]["installExperience"] == user_context()
+
+
+def test_supersede_can_change_the_install_context(intune, graph, store, package):
+    current = existing_app(intune, installExperience=user_context())
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, current)
+    form.update(mode="supersede", rollout="none", run_as="system")
+    seen, step, progress = steps()
+    outcome = publish.publish_supersede(
+        graph, store, package, analysis, form, current, step, progress
+    )
+    assert intune.apps[outcome["app_id"]]["installExperience"] == {
+        **user_context(),
+        "runAsAccount": "system",
+    }
+    assert intune.apps[current["id"]]["installExperience"] == user_context()
+
+
+def test_inplace_update_leaves_the_install_context_alone(intune, graph, package):
+    current = existing_app(intune, installExperience=user_context())
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, current)
+    seen, step, progress = steps()
+    publish.publish_inplace(graph, package, analysis, form, current, step, progress)
+    assert intune.patches and all("installExperience" not in patch for patch in intune.patches)
+    assert intune.apps[current["id"]]["installExperience"] == user_context()
+
+
+def test_inplace_update_can_change_the_install_context(intune, graph, package):
+    current = existing_app(intune, installExperience=user_context())
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, current)
+    form["run_as"] = "system"
+    seen, step, progress = steps()
+    publish.publish_inplace(graph, package, analysis, form, current, step, progress)
+    assert intune.apps[current["id"]]["installExperience"] == {
+        **user_context(),
+        "runAsAccount": "system",
+    }
+
+
+# --------------------------------------------------------------------------- notifications
+
+
+def notifications_of(intune, app_id):
+    return {
+        appmodel.target_key(item["target"]): (item.get("settings") or {}).get("notifications")
+        for item in intune.assignments[app_id]
+    }
+
+
+def pilot_and_prod():
+    return {
+        "pilot": {"intent": "required", "targets": [{"type": "group", "id": GROUP_PILOT}]},
+        "prod": {"intent": "required", "targets": [{"type": "group", "id": GROUP_PROD}]},
+    }
+
+
+def test_notifications_are_shown_by_default(intune, graph, store, package):
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, None)
+    form.update(rollout="prod", **pilot_and_prod())
+    seen, step, progress = steps()
+    outcome = publish.publish_new(graph, store, package, analysis, form, step, progress)
+    assert notifications_of(intune, outcome["app_id"]) == {
+        GROUP_PILOT: "showAll",
+        GROUP_PROD: "showAll",
+    }
+    assert store.get(outcome["app_id"])["notifications"] == "showAll"
+
+
+def test_new_app_assignments_use_the_chosen_notifications(intune, graph, store, package):
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, None)
+    form.update(rollout="pilot", notifications="hideAll", **pilot_and_prod())
+    seen, step, progress = steps()
+    outcome = publish.publish_new(graph, store, package, analysis, form, step, progress)
+    app_id = outcome["app_id"]
+    assert notifications_of(intune, app_id) == {GROUP_PILOT: "hideAll"}
+    assert store.get(app_id)["notifications"] == "hideAll"
+
+    # Going to production adds the production groups with the same setting.
+    publish.promote(graph, store, app_id)
+    assert notifications_of(intune, app_id) == {GROUP_PILOT: "hideAll", GROUP_PROD: "hideAll"}
+
+
+def test_notifications_follow_the_app_to_its_next_version(intune, graph, store, package):
+    current = existing_app(intune)
+    store.set(current["id"], "App", **pilot_and_prod(), notifications="showReboot")
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, current)
+    form.update(mode="supersede", rollout="pilot")
+    seen, step, progress = steps()
+    outcome = publish.publish_supersede(
+        graph, store, package, analysis, form, current, step, progress
+    )
+    new_id = outcome["app_id"]
+    assert notifications_of(intune, new_id) == {GROUP_PILOT: "showReboot"}
+    assert store.get(new_id)["notifications"] == "showReboot"
+    publish.promote(graph, store, new_id)
+    assert notifications_of(intune, new_id) == {
+        GROUP_PILOT: "showReboot",
+        GROUP_PROD: "showReboot",
+    }
+
+
+def test_supersede_can_change_the_notifications(intune, graph, store, package):
+    current = existing_app(intune)
+    store.set(current["id"], "App", **pilot_and_prod(), notifications="showReboot")
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, current)
+    form.update(mode="supersede", rollout="prod", notifications="hideAll")
+    seen, step, progress = steps()
+    outcome = publish.publish_supersede(
+        graph, store, package, analysis, form, current, step, progress
+    )
+    new_id = outcome["app_id"]
+    assert notifications_of(intune, new_id) == {GROUP_PILOT: "hideAll", GROUP_PROD: "hideAll"}
+    assert store.get(new_id)["notifications"] == "hideAll"
+
+
+def test_supersede_remembers_notifications_for_an_app_without_groups(intune, graph, store, package):
+    current = existing_app(intune)
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, current)
+    form.update(mode="supersede", rollout="none", notifications="hideAll")
+    seen, step, progress = steps()
+    outcome = publish.publish_supersede(
+        graph, store, package, analysis, form, current, step, progress
+    )
+    assert store.get(outcome["app_id"])["notifications"] == "hideAll"
+
+
+def test_assignments_copied_from_the_previous_version_keep_their_own_settings(
+    intune, graph, store, package
+):
+    # No production group configured: the assignments of the previous version are
+    # reused as they are, whatever someone set on them in the Intune portal.
+    current = existing_app(intune)
+    copied = appmodel.assignment_for({"type": "group", "id": GROUP_PROD}, "required", "showReboot")
+    intune.assignments[current["id"]] = [{"id": "x", **copied}]
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, current)
+    form.update(mode="supersede", rollout="prod", notifications="hideAll")
+    seen, step, progress = steps()
+    outcome = publish.publish_supersede(
+        graph, store, package, analysis, form, current, step, progress
+    )
+    assert notifications_of(intune, outcome["app_id"]) == {GROUP_PROD: "showReboot"}
+
+
+@pytest.mark.parametrize("mode", ["new", "supersede"])
+def test_unknown_notifications_are_refused_before_anything_is_sent(
+    intune, graph, store, package, mode
+):
+    analysis = msi_analysis()
+    current = existing_app(intune) if mode == "supersede" else None
+    form = appmodel.propose_form(analysis, current)
+    form.update(rollout="none", notifications="quiet")
+    seen, step, progress = steps()
+    with pytest.raises(StoreError, match="error.bad_notifications"):
+        if current:
+            publish.publish_supersede(
+                graph, store, package, analysis, form, current, step, progress
+            )
+        else:
+            publish.publish_new(graph, store, package, analysis, form, step, progress)
+    assert intune.calls == []
+
+
+def test_badly_formed_group_is_refused_before_the_app_is_created(intune, graph, store, package):
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, None)
+    form.update(rollout="pilot", pilot={"targets": [{"type": "group", "id": "nope"}]})
+    seen, step, progress = steps()
+    with pytest.raises(StoreError, match="error.bad_group_id"):
         publish.publish_new(graph, store, package, analysis, form, step, progress)
     assert intune.calls == []
