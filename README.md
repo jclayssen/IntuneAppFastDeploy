@@ -462,6 +462,7 @@ Outside `environment:`, three other lines of `docker-compose.yml` can be adapted
 - **No telemetry.** The tool contacts only Microsoft (sign-in, Microsoft Graph, the Azure storage Intune designates for the upload) and the download links you give it.
 - **Nothing about your tenant leaves your machine or is stored in this repository.** Your identifiers live in your own copy of `docker-compose.yml`, and your groups in your `config` folder.
 - **No password or secret is stored.** Sign-in uses the authorization code flow with PKCE; tokens stay in memory.
+- **The server's log holds no sign-in data.** Each request is logged with its method, path and response status, never with its query string: the authorization code and the account identifiers Microsoft sends back at sign-in are not written to `docker compose logs`.
 - **Delegated rights only.** Every action is done as the signed-in person and appears under their name in the Intune audit logs.
 - **Installers are downloaded by the server.** Anyone who can sign in can make the server fetch a URL, including internal ones: keep access limited to administrators.
 - The container runs as an unprivileged user with all Linux capabilities dropped.
@@ -538,6 +539,7 @@ Layout:
 | `src/iafd/inventory.py` | Grouping, search and paging of the device inventory |
 | `src/iafd/removal.py`, `protected.py`, `scripts/Remove-Software.ps1` | Removal rules, the protected list and the script that runs on the devices |
 | `src/iafd/auth.py`, `web.py`, `jobs.py`, `store.py` | Sign-in, HTTP API, background tasks, local configuration |
+| `src/iafd/accesslog.py` | Access log of the server, without query strings |
 | `src/iafd/static/`, `src/iafd/locales/` | Interface and its texts |
 
 Regenerate the README screenshots after an interface change (needs Node.js and Playwright; restart the demo before each language so it starts from the same data):
