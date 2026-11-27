@@ -489,6 +489,7 @@ def test_only_the_filled_advanced_fields_are_sent():
         ({"processors": True}, "error.advanced_number", "minimumNumberOfProcessors"),
         ({"cpu_speed_mhz": [1800]}, "error.advanced_number", "minimumCpuSpeedInMHz"),
         ({"cpu_speed_mhz": 2**31}, "error.advanced_number", "minimumCpuSpeedInMHz"),
+        ({"memory_mb": "9" * 5000}, "error.advanced_number", "minimumMemoryInMB"),
         ({"max_run_time": 0}, "error.advanced_number", "maxRunTimeInMinutes"),
         ({"max_run_time": 1441}, "error.advanced_number", "maxRunTimeInMinutes"),
         ({"restart_behavior": "never"}, "error.bad_restart_behavior", ""),
@@ -597,7 +598,11 @@ def test_emptied_install_time_goes_back_to_the_default_of_intune():
     patch = appmodel.inplace_patch(existing, form, exe_analysis(), "1")
     assert patch["installExperience"]["maxRunTimeInMinutes"] == 60
     # Nothing to send when the app is already at the default, or never said anything.
-    for experience in ({"runAsAccount": "system", "maxRunTimeInMinutes": 60}, None):
+    for experience in (
+        {"runAsAccount": "system", "maxRunTimeInMinutes": 60},
+        {"runAsAccount": "system", "maxRunTimeInMinutes": 0},
+        None,
+    ):
         usual = updatable_app(installExperience=experience)
         form = appmodel.propose_form(exe_analysis(), usual)
         form["advanced"]["max_run_time"] = ""

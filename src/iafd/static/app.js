@@ -443,9 +443,9 @@ function advancedEditor(advanced, isUpdate) {
   });
   return {
     node: h("div", { class: "panel" }, h("h2", {}, t("advanced.title")), h("p", { class: "muted" }, t(isUpdate ? "advanced.intro_update" : "advanced.intro_new")), toggle, body),
-    // The label of the first numeric field that is not a whole number, if any.
+    // The label of the first numeric field that is not a whole number above zero, if any.
     invalid: () => {
-      const bad = ADVANCED_NUMBERS.find(([key]) => !/^\d*$/.test(numbers[key].value.trim()));
+      const bad = ADVANCED_NUMBERS.find(([key]) => !/^(\d{0,9}[1-9]\d{0,9})?$/.test(numbers[key].value.trim()) || numbers[key].value.trim().length > 10);
       if (bad && body.hidden) toggle.click();
       return bad ? t(bad[1]) : null;
     },

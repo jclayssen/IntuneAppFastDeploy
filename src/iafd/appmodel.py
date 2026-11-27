@@ -400,7 +400,8 @@ def _positive(value: object, prop: str, maximum: int = INT32_MAX) -> int | None:
         value = value.strip()
         if not value:
             return None
-        if not value.isascii() or not value.isdigit():
+        # The length is checked first: converting an endless run of digits is an error of its own.
+        if len(value) > 10 or not value.isascii() or not value.isdigit():
             raise FormError("error.advanced_number", prop)
         value = int(value)
     if value is None:
@@ -465,7 +466,7 @@ def _install_experience(form: dict, existing: dict | None) -> dict | None:
         minutes = _positive(advanced["max_run_time"], "maxRunTimeInMinutes", MAX_RUN_TIME)
         if minutes is not None:
             wanted["maxRunTimeInMinutes"] = minutes
-        elif wanted.get("maxRunTimeInMinutes") not in (None, DEFAULT_MAX_RUN_TIME):
+        elif (wanted.get("maxRunTimeInMinutes") or DEFAULT_MAX_RUN_TIME) != DEFAULT_MAX_RUN_TIME:
             # Emptied on an app that had its own value: back to what Intune does by default.
             wanted["maxRunTimeInMinutes"] = DEFAULT_MAX_RUN_TIME
     if existing is not None and wanted == current:
