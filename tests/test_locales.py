@@ -10,7 +10,7 @@ LOCALES = {
 }
 PREFIXES = (
     "error|warning|step|action|apps|app|stage|intent|target|rollout|wizard|review|form|arch"
-    "|run_as|detection|mode|done|setup|login|footer|nav|inventory|removal|replace|notify"
+    "|run_as|detection|mode|done|setup|login|footer|nav|inventory|removal|replace|notify|advanced"
 )
 NOT_KEYS = {"rollout.json", "app.exe", "app.js"}
 

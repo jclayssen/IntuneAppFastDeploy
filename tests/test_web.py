@@ -174,3 +174,52 @@ def test_review_form_of_an_update_carries_the_current_settings(client):
     assert refused.status_code == 400
     assert refused.json()["error"]["code"] == "error.bad_notifications"
     assert len(intune.apps) == apps_before  # nothing was created
+
+
+def test_advanced_settings_of_the_current_app_reach_the_review_screen(client):
+    intune = client.app.state.intune
+    intune.apps["app-3"].update(
+        minimumMemoryInMB=4096,
+        minimumSupportedWindowsRelease="21H1",
+        installExperience={"runAsAccount": "system", "maxRunTimeInMinutes": 90},
+    )
+    assert "Windows11_23H2" in client.get("/api/config").json()["windows_releases"]
+    assert client.get("/api/apps/app-3").json()["app"]["advanced"]["memory_mb"] == 4096
+
+    response = client.post(
+        "/api/analyze/upload",
+        files={"file": ("npp.8.7.0.Installer.x64.exe", b"MZ" + b"\\x00" * 4096)},
+        data={"app_id": "app-3"},
+    )
+    job = wait(client, response.json()["id"], {"ready", "error"})
+    form = job["result"]["form"]
+    assert form["advanced"] == {
+        "disk_space_mb": None,
+        "memory_mb": 4096,
+        "processors": None,
+        "cpu_speed_mhz": None,
+        "windows_release": "21H1",
+        "restart_behavior": "basedOnReturnCode",
+        "max_run_time": 90,
+        "allow_uninstall": False,
+    }
+
+    form.update(mode="inplace", version="8.7.0")
+    form["detection"]["value"] = "8.7.0"
+    form["advanced"]["processors"] = "two"
+    refused = client.post(f"/api/jobs/{job['id']}/publish", json=form)
+    assert refused.status_code == 400
+    assert refused.json()["error"] == {
+        "code": "error.advanced_number",
+        "detail": "minimumNumberOfProcessors",
+    }
+
+    form["advanced"].update(processors="2", disk_space_mb="750")
+    started = client.post(f"/api/jobs/{job['id']}/publish", json=form)
+    assert started.status_code == 200, started.text
+    done = wait(client, job["id"], {"done", "ready"})
+    assert done["state"] == "done", done
+    app = intune.apps["app-3"]
+    assert app["minimumNumberOfProcessors"] == 2 and app["minimumFreeDiskSpaceInMB"] == 750
+    assert app["minimumMemoryInMB"] == 4096 and app["minimumSupportedWindowsRelease"] == "21H1"
+    assert app["installExperience"] == {"runAsAccount": "system", "maxRunTimeInMinutes": 90}

@@ -58,6 +58,33 @@ class FakeIntune:
         self.relationships[app_id] = []
         return app
 
+    @staticmethod
+    def _check_settings(body: dict) -> None:
+        """Types and values the reference gives for the settings a form can change."""
+        for prop in (
+            "minimumFreeDiskSpaceInMB",
+            "minimumMemoryInMB",
+            "minimumNumberOfProcessors",
+            "minimumCpuSpeedInMHz",
+        ):
+            value = body.get(prop)
+            assert value is None or (type(value) is int and value > 0), (prop, value)
+        if "allowAvailableUninstall" in body:
+            assert isinstance(body["allowAvailableUninstall"], bool)
+        if "minimumSupportedWindowsRelease" in body:
+            assert isinstance(body["minimumSupportedWindowsRelease"], str)
+        experience = body.get("installExperience")
+        if experience is not None:
+            assert experience["runAsAccount"] in ("system", "user"), experience
+            assert experience.get("deviceRestartBehavior", "allow") in (
+                "basedOnReturnCode",
+                "allow",
+                "suppress",
+                "force",
+            ), experience
+            minutes = experience.get("maxRunTimeInMinutes", 60)
+            assert type(minutes) is int and minutes > 0, experience
+
     def add_device(self, name: str, user: str, software: list[tuple[str, str, str]]) -> dict:
         """A Windows device with (name, version, publisher) entries installed on it."""
         number = len(self.devices) + 1
@@ -396,6 +423,7 @@ class FakeIntune:
                 assert forbidden not in body, forbidden
             assert body["displayName"] and body["publisher"] and body["description"]
             assert body["rules"], "an app needs a detection rule"
+            self._check_settings(body)
             app = self.add_app(**body)
             return httpx.Response(201, json=app)
 
@@ -409,6 +437,7 @@ class FakeIntune:
             return httpx.Response(200, json=app)
         if rest == "" and method == "PATCH":
             self.patches.append(body)
+            self._check_settings(body)
             app.update(body)
             return httpx.Response(204)
         if rest == "" and method == "DELETE":

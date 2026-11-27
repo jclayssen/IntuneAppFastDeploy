@@ -53,6 +53,43 @@ DEFAULT_INSTALL_EXPERIENCE = {
     "deviceRestartBehavior": "basedOnReturnCode",
 }
 
+# Advanced settings: what the form calls them -> the win32LobApp property.
+REQUIREMENT_NUMBERS = {
+    "disk_space_mb": "minimumFreeDiskSpaceInMB",
+    "memory_mb": "minimumMemoryInMB",
+    "processors": "minimumNumberOfProcessors",
+    "cpu_speed_mhz": "minimumCpuSpeedInMHz",
+}
+RESTART_BEHAVIORS = (
+    "basedOnReturnCode",
+    "allow",
+    "suppress",
+    "force",
+)  # win32LobAppRestartBehavior
+# Values of minimumSupportedWindowsRelease, oldest first. Graph documents it as a
+# plain string: these are the ones a source confirms ("2H20" is Windows 10 20H2).
+WINDOWS_RELEASES = (
+    "1607",
+    "1703",
+    "1709",
+    "1803",
+    "1809",
+    "1903",
+    "1909",
+    "2004",
+    "2H20",
+    "21H1",
+    "Windows10_21H2",
+    "Windows10_22H2",
+    "Windows11_21H2",
+    "Windows11_22H2",
+    "Windows11_23H2",
+)
+DEFAULT_WINDOWS_RELEASE = "1607"
+DEFAULT_MAX_RUN_TIME = 60  # minutes; what Intune uses when nothing is said
+MAX_RUN_TIME = 1440
+INT32_MAX = 2**31 - 1
+
 _GUID = re.compile(r"\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}")
 _LEGACY_TYPES = {
     "#microsoft.graph.win32LobAppProductCodeDetection": RULE_PRODUCT,
@@ -70,7 +107,11 @@ _LEGACY_TYPES = {
 
 
 class FormError(ValueError):
-    """Carries a translation key for the UI."""
+    """Carries a translation key for the UI, and when useful what it is about."""
+
+    def __init__(self, key: str, detail: str = "") -> None:
+        super().__init__(key)
+        self.detail = detail
 
 
 # --------------------------------------------------------------------------- reading
@@ -83,6 +124,25 @@ def app_version(app: dict) -> str:
 def run_as_of(app: dict) -> str:
     """The account an app installs under; Intune's own default is the system."""
     return (app.get("installExperience") or {}).get("runAsAccount") or "system"
+
+
+def advanced_model(existing: dict | None) -> dict:
+    """The advanced settings in the shape the form edits.
+
+    For a new app these are the defaults of the tool; for an existing one, what
+    Intune holds. An empty value means "nothing set".
+    """
+    app = existing or {}
+    experience = app.get("installExperience") or {}
+    model: dict = {key: app.get(prop) or None for key, prop in REQUIREMENT_NUMBERS.items()}
+    model.update(
+        windows_release=app.get("minimumSupportedWindowsRelease")
+        or ("" if existing else DEFAULT_WINDOWS_RELEASE),
+        restart_behavior=experience.get("deviceRestartBehavior") or "basedOnReturnCode",
+        max_run_time=experience.get("maxRunTimeInMinutes") or None,
+        allow_uninstall=bool(app.get("allowAvailableUninstall")),
+    )
+    return model
 
 
 def summarize(app: dict) -> dict:
@@ -325,6 +385,61 @@ def _with_replace(rules: list[dict], form: dict) -> list[dict]:
     return rules
 
 
+def _advanced(form: dict) -> dict:
+    advanced = form.get("advanced")
+    if advanced is None:
+        return {}
+    if not isinstance(advanced, dict):
+        raise FormError("error.bad_advanced")
+    return advanced
+
+
+def _positive(value: object, prop: str, maximum: int = INT32_MAX) -> int | None:
+    """A whole number from 1 to ``maximum``; None for an empty field."""
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        if not value.isascii() or not value.isdigit():
+            raise FormError("error.advanced_number", prop)
+        value = int(value)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
+        raise FormError("error.advanced_number", prop)
+    return value
+
+
+def _advanced_fields(form: dict, existing: dict | None) -> dict:
+    """App properties the advanced section changes; nothing for what is left as it was.
+
+    A requirement that was emptied is sent as null, which removes it.
+    """
+    advanced = _advanced(form)
+    app = existing or {}
+    fields: dict = {}
+    for key, prop in REQUIREMENT_NUMBERS.items():
+        if key not in advanced:
+            continue
+        wanted = _positive(advanced[key], prop)
+        if wanted != (app.get(prop) or None):
+            fields[prop] = wanted
+    release = advanced.get("windows_release")
+    current = app.get("minimumSupportedWindowsRelease") if existing else DEFAULT_WINDOWS_RELEASE
+    # A release the tool does not know is kept on an app that already has it.
+    if release not in (None, "") and release != current:
+        if release not in WINDOWS_RELEASES:
+            raise FormError("error.bad_windows_release")
+        fields["minimumSupportedWindowsRelease"] = release
+    allow = advanced.get("allow_uninstall")
+    if allow is not None:
+        if not isinstance(allow, bool):
+            raise FormError("error.bad_advanced")
+        if allow != bool(app.get("allowAvailableUninstall")):
+            fields["allowAvailableUninstall"] = allow
+    return fields
+
+
 def _install_experience(form: dict, existing: dict | None) -> dict | None:
     """The install experience to send, or None when the form changes nothing.
 
@@ -337,7 +452,22 @@ def _install_experience(form: dict, existing: dict | None) -> dict | None:
     if run_as not in (None, ""):
         if run_as not in RUN_AS:
             raise FormError("error.bad_run_as")
-        wanted["runAsAccount"] = run_as
+        if run_as != (current.get("runAsAccount") or "system"):
+            wanted["runAsAccount"] = run_as
+    advanced = _advanced(form)
+    restart = advanced.get("restart_behavior")
+    if restart not in (None, ""):
+        if restart not in RESTART_BEHAVIORS:
+            raise FormError("error.bad_restart_behavior")
+        if restart != (current.get("deviceRestartBehavior") or "basedOnReturnCode"):
+            wanted["deviceRestartBehavior"] = restart
+    if "max_run_time" in advanced:
+        minutes = _positive(advanced["max_run_time"], "maxRunTimeInMinutes", MAX_RUN_TIME)
+        if minutes is not None:
+            wanted["maxRunTimeInMinutes"] = minutes
+        elif wanted.get("maxRunTimeInMinutes") not in (None, DEFAULT_MAX_RUN_TIME):
+            # Emptied on an app that had its own value: back to what Intune does by default.
+            wanted["maxRunTimeInMinutes"] = DEFAULT_MAX_RUN_TIME
     if existing is not None and wanted == current:
         return None
     return wanted
@@ -352,11 +482,12 @@ def new_app_body(form: dict, analysis: dict) -> dict:
         "isFeatured": False,
         "installExperience": _install_experience(form, None),
         "applicableArchitectures": ARCHITECTURES.get(form.get("architecture", "any"), "x86,x64"),
-        "minimumSupportedWindowsRelease": "1607",
+        "minimumSupportedWindowsRelease": DEFAULT_WINDOWS_RELEASE,
         "returnCodes": copy.deepcopy(DEFAULT_RETURN_CODES),
         "rules": _rules_for(form, analysis, None),
     }
     body.update(_content_fields(form, analysis))
+    body.update(_advanced_fields(form, None))
     return body
 
 
@@ -373,6 +504,7 @@ def clone_app_body(existing: dict, form: dict, analysis: dict) -> dict:
     experience = _install_experience(form, existing)
     if experience is not None:
         body["installExperience"] = experience
+    body.update(_advanced_fields(form, existing))
     if not body.get("largeIcon"):
         body.pop("largeIcon", None)
     return body
@@ -390,6 +522,7 @@ def inplace_patch(existing: dict, form: dict, analysis: dict, content_version: s
     experience = _install_experience(form, existing)
     if experience is not None:
         patch["installExperience"] = experience
+    patch.update(_advanced_fields(form, existing))
     return patch
 
 
@@ -442,6 +575,7 @@ def propose_form(analysis: dict, existing: dict | None) -> dict:
             "run_as": "user"
             if (analysis.get("msi") or {}).get("package_type") == "perUser"
             else "system",
+            "advanced": advanced_model(None),
             "detection": detection,
             "warnings": warnings,
         }
@@ -498,6 +632,7 @@ def propose_form(analysis: dict, existing: dict | None) -> dict:
         "install_command": install,
         "uninstall_command": uninstall,
         "run_as": run_as_of(existing),
+        "advanced": advanced_model(existing),
         "detection": detection,
         "warnings": warnings,
         "current_version": old_version,

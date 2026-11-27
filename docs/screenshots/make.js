@@ -93,6 +93,15 @@ const PILOT = { en: "Pilot - IT team", fr: "Pilote - équipe informatique" }[lan
   await detection.nth(1).fill("7zFM.exe");
   await shot("08-new-application");
 
+  // 13. The advanced settings, closed by default at the bottom of the review screen.
+  await button("advanced.show").click();
+  const advanced = page.locator(".panel", { has: page.locator("#advanced-settings") });
+  const numbers = advanced.locator("input[type=text]");
+  await numbers.nth(0).fill("500");
+  await numbers.nth(1).fill("4096");
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  await advanced.screenshot({ path: path.join(out, "13-advanced-settings.png") });
+
   // 9. Device inventory: the software Intune found on the devices.
   await page.goto(base);
   await page.waitForSelector("table");
