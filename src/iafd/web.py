@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__, appmodel, intunewin, inventory, protected, publish, removal
+from .accesslog import log_config
 from .analyze import analyze
 from .appmodel import FormError
 from .auth import COOKIE, Auth, AuthError, Session
@@ -851,6 +852,7 @@ def main() -> None:
         proxy_headers=True,
         forwarded_allow_ips="*",
         log_level="info",
+        log_config=log_config(),
     )
 
 

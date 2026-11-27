@@ -1,5 +1,6 @@
 """The HTTP layer, with sign-in bypassed and Intune replaced by the fake."""
 
+import re
 import time
 
 import httpx
@@ -126,6 +127,18 @@ def test_language_files_cannot_be_used_to_read_other_files(client):
     assert client.get("/locales/fr.json").json()["_name"] == "Français"
     for name in ("..%2F..%2Fconfig", "..%2Fstatic%2Fapp", "nope", "%2Fetc%2Fpasswd"):
         assert client.get(f"/locales/{name}.json").status_code == 404, name
+
+
+def test_sign_out_button_is_hidden_until_someone_signs_in(tmp_path):
+    settings = Settings(tenant_id="t", client_id="c", config_dir=tmp_path, work_dir=tmp_path / "w")
+    with TestClient(create_app(settings)) as anonymous:
+        page = anonymous.get("/").text
+        css = anonymous.get("/style.css").text
+    # The page ships the button hidden; the interface only reveals it once /api/me answers.
+    assert re.search(r'<button id="logout"[^>]*\shidden[\s>]', page)
+    # "button { display: ... }" beats the browser's own rule for the hidden attribute:
+    # without this rule the attribute has no effect and the button shows on the sign-in screen.
+    assert re.search(r"\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}", css)
 
 
 def test_app_detail_tells_the_install_context_and_the_notification_setting(client):

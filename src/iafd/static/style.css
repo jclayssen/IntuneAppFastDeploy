@@ -28,6 +28,8 @@
   }
 }
 * { box-sizing: border-box; }
+/* The rules below set "display" on buttons, labels and rows, which would override the hidden attribute. */
+[hidden] { display: none !important; }
 body {
   margin: 0;
   background: var(--bg);
