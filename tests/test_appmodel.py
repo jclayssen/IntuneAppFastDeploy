@@ -239,3 +239,145 @@ def test_unwritable_config_folder_is_reported_not_crashed(tmp_path, monkeypatch)
     monkeypatch.setattr("iafd.store.os.replace", denied)
     with pytest.raises(StoreError, match="error.config_not_writable"):
         store.set("a", "App", None, None)
+
+
+# --------------------------------------------------------------------------- install context
+
+
+def updatable_app(**extra):
+    return {
+        "id": "a",
+        "displayName": "App 1.0",
+        "displayVersion": "1.0",
+        "publisher": "Pub",
+        "description": "Desc",
+        "setupFilePath": "setup-1.0.exe",
+        "installCommandLine": '"setup-1.0.exe" /S',
+        "uninstallCommandLine": '"C:\\Program Files\\App\\uninstall.exe" /S',
+        "rules": [file_rule()],
+        **extra,
+    }
+
+
+def new_exe_form(**extra):
+    form = appmodel.propose_form(exe_analysis(), None)
+    form.update(
+        publisher="Pub",
+        uninstall_command="uninstall.exe /S",
+        detection={
+            "type": "file",
+            "path": "C:\\App",
+            "name": "app.exe",
+            "operator": "version_ge",
+            "value": "2.0",
+        },
+    )
+    form.update(extra)
+    return form
+
+
+@pytest.mark.parametrize("run_as", ["system", "user"])
+def test_new_app_sends_the_install_context(run_as):
+    body = appmodel.new_app_body(new_exe_form(run_as=run_as), exe_analysis())
+    assert body["installExperience"]["runAsAccount"] == run_as
+
+
+def test_new_app_installs_as_system_when_nothing_is_chosen():
+    form = new_exe_form()
+    del form["run_as"]
+    body = appmodel.new_app_body(form, exe_analysis())
+    assert body["installExperience"] == {
+        "runAsAccount": "system",
+        "deviceRestartBehavior": "basedOnReturnCode",
+    }
+
+
+def test_unknown_install_context_is_refused():
+    with pytest.raises(appmodel.FormError, match="error.bad_run_as"):
+        appmodel.new_app_body(new_exe_form(run_as="administrator"), exe_analysis())
+    existing = updatable_app()
+    form = appmodel.propose_form(exe_analysis(), existing)
+    form["run_as"] = "root"
+    with pytest.raises(appmodel.FormError, match="error.bad_run_as"):
+        appmodel.clone_app_body(existing, form, exe_analysis())
+    with pytest.raises(appmodel.FormError, match="error.bad_run_as"):
+        appmodel.inplace_patch(existing, form, exe_analysis(), "1")
+
+
+def test_update_form_shows_the_install_context_of_the_current_app():
+    user_app = updatable_app(
+        installExperience={"runAsAccount": "user", "deviceRestartBehavior": "suppress"}
+    )
+    assert appmodel.propose_form(exe_analysis(), user_app)["run_as"] == "user"
+    # An app whose install experience Graph does not return installs as system.
+    assert appmodel.propose_form(exe_analysis(), updatable_app())["run_as"] == "system"
+
+
+def test_update_keeps_the_install_context_unless_it_is_changed():
+    experience = {
+        "runAsAccount": "user",
+        "deviceRestartBehavior": "suppress",
+        "maxRunTimeInMinutes": 90,
+    }
+    existing = updatable_app(installExperience=experience)
+    form = appmodel.propose_form(exe_analysis(), existing)
+
+    # Untouched: the copy carries the same object, the in-place update does not send it.
+    clone = appmodel.clone_app_body(existing, form, exe_analysis())
+    assert clone["installExperience"] == experience
+    assert "installExperience" not in appmodel.inplace_patch(existing, form, exe_analysis(), "1")
+    # A form that says nothing about it changes nothing either.
+    silent = {key: value for key, value in form.items() if key != "run_as"}
+    clone = appmodel.clone_app_body(existing, silent, exe_analysis())
+    assert clone["installExperience"] == experience
+    assert "installExperience" not in appmodel.inplace_patch(existing, silent, exe_analysis(), "1")
+
+    # Changed: only the account moves, the rest of the object is kept.
+    form["run_as"] = "system"
+    wanted = {**experience, "runAsAccount": "system"}
+    assert appmodel.clone_app_body(existing, form, exe_analysis())["installExperience"] == wanted
+    patch = appmodel.inplace_patch(existing, form, exe_analysis(), "1")
+    assert patch["installExperience"] == wanted
+    assert existing["installExperience"] == experience  # the app read from Intune is not modified
+
+
+def test_install_context_of_an_app():
+    assert appmodel.run_as_of(updatable_app()) == "system"
+    assert appmodel.run_as_of(updatable_app(installExperience={"runAsAccount": "user"})) == "user"
+
+
+# --------------------------------------------------------------------------- notifications
+
+
+def test_stage_assignments_carry_the_notification_setting():
+    stage = {"intent": "required", "targets": [{"type": "allDevices"}]}
+    assert appmodel.stage_assignments(stage)[0]["settings"]["notifications"] == "showAll"
+    for value in ("showAll", "showReboot", "hideAll"):
+        settings = appmodel.stage_assignments(stage, value)[0]["settings"]
+        assert settings["notifications"] == value
+        assert settings["@odata.type"] == "#microsoft.graph.win32LobAppAssignmentSettings"
+
+
+def test_assignment_description_tells_the_notification_setting():
+    built = appmodel.assignment_for({"type": "allUsers"}, "required", "hideAll")
+    assert appmodel.describe_assignment(built)["notifications"] == "hideAll"
+    # Assignments made elsewhere may have no settings at all.
+    bare = {"intent": "required", "target": built["target"], "settings": None}
+    assert appmodel.describe_assignment(bare)["notifications"] is None
+
+
+def test_store_keeps_the_notification_setting(tmp_path):
+    store = RolloutStore(tmp_path)
+    assert store.get("app-1")["notifications"] == "showAll"
+    store.set("app-1", "App", None, None, "showReboot")
+    assert store.get("app-1")["notifications"] == "showReboot"
+    # Saving the groups without saying anything about notifications keeps the setting.
+    store.set("app-1", "App", None, None)
+    assert store.get("app-1")["notifications"] == "showReboot"
+    # It follows the application to its next version, like the groups.
+    store.move("app-1", "app-2", "App 2")
+    assert store.get("app-2")["notifications"] == "showReboot"
+    assert store.get("app-1")["notifications"] == "showAll"
+    with pytest.raises(StoreError, match="error.bad_notifications"):
+        store.set("app-2", "App", None, None, "silent")
+    assert store.get("app-2")["notifications"] == "showReboot"

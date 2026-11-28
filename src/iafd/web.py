@@ -235,6 +235,7 @@ def create_app(
             description=app_data.get("description", ""),
             install_command=app_data.get("installCommandLine", ""),
             uninstall_command=app_data.get("uninstallCommandLine", ""),
+            run_as=appmodel.run_as_of(app_data),
             detection=appmodel.detection_model(appmodel.app_rules(app_data)),
         )
         newer = [
@@ -264,7 +265,13 @@ def create_app(
     @app.put("/api/apps/{app_id}/rollout")
     def save_rollout(request: Request, app_id: str, body: dict = Body(...)) -> dict:  # noqa: B008
         current(request)
-        return store.set(app_id, str(body.get("name", "")), body.get("pilot"), body.get("prod"))
+        return store.set(
+            app_id,
+            str(body.get("name", "")),
+            body.get("pilot"),
+            body.get("prod"),
+            body.get("notifications"),
+        )
 
     @app.post("/api/apps/{app_id}/promote")
     def promote(request: Request, app_id: str) -> dict:
@@ -780,6 +787,8 @@ def create_app(
             appmodel.clone_app_body(existing, form, analysis)
         else:
             appmodel.inplace_patch(existing, form, analysis, "pending")
+        if mode != "inplace":
+            publish.check_rollout(form, new_app=mode == "new")
         replacement(form)
 
         def work(job: Job) -> None:

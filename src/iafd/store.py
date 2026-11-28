@@ -8,8 +8,13 @@ Shape::
     {"apps": {"<intune app id>": {
         "name": "7-Zip",
         "pilot": {"intent": "required", "targets": [{"type": "group", "id": "...", "name": "..."}]},
-        "prod":  {"intent": "required", "targets": [{"type": "allDevices"}]}
+        "prod":  {"intent": "required", "targets": [{"type": "allDevices"}]},
+        "notifications": "showAll"
     }}}
+
+``notifications`` is what the people on the devices see when Intune installs the
+application through an assignment made by this tool: ``showAll`` (the default),
+``showReboot`` (restarts only) or ``hideAll``.
 """
 
 from __future__ import annotations
@@ -22,6 +27,8 @@ from pathlib import Path
 
 TARGET_TYPES = ("group", "allDevices", "allUsers")
 INTENTS = ("required", "available")
+NOTIFICATIONS = ("showAll", "showReboot", "hideAll")  # win32LobAppNotification
+DEFAULT_NOTIFICATIONS = "showAll"
 _GUID = re.compile(r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
 
 
@@ -54,6 +61,15 @@ def clean_stage(stage: dict | None) -> dict:
             seen.add(key)
             targets.append(cleaned)
     return {"intent": intent, "targets": targets}
+
+
+def clean_notifications(value: object) -> str | None:
+    """Validate a notification setting coming from the UI; None means "not given"."""
+    if value in (None, ""):
+        return None
+    if value not in NOTIFICATIONS:
+        raise StoreError("error.bad_notifications")
+    return str(value)
 
 
 class RemovalStore:
@@ -109,6 +125,12 @@ class RemovalStore:
                 self._write(data)
 
 
+def _stored_notifications(record: dict) -> str:
+    """The setting of a record; files written before it existed, or edited by hand, show all."""
+    value = record.get("notifications")
+    return value if value in NOTIFICATIONS else DEFAULT_NOTIFICATIONS
+
+
 class RolloutStore:
     def __init__(self, config_dir: Path) -> None:
         self.path = config_dir / "rollout.json"
@@ -151,12 +173,25 @@ class RolloutStore:
             "name": record.get("name", ""),
             "pilot": record.get("pilot") or {"intent": "required", "targets": []},
             "prod": record.get("prod") or {"intent": "required", "targets": []},
+            "notifications": _stored_notifications(record),
         }
 
-    def set(self, app_id: str, name: str, pilot: dict | None, prod: dict | None) -> dict:
+    def set(
+        self,
+        app_id: str,
+        name: str,
+        pilot: dict | None,
+        prod: dict | None,
+        notifications: str | None = None,
+    ) -> dict:
+        """Save the groups of an app. ``notifications`` left out keeps the current setting."""
         record = {"name": name, "pilot": clean_stage(pilot), "prod": clean_stage(prod)}
+        wanted = clean_notifications(notifications)
         with self._lock:
             data = self._read()
+            record["notifications"] = wanted or _stored_notifications(
+                data["apps"].get(app_id) or {}
+            )
             data["apps"][app_id] = record
             self._write(data)
         return record

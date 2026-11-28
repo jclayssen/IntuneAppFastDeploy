@@ -139,3 +139,51 @@ def test_sign_out_button_is_hidden_until_someone_signs_in(tmp_path):
     # "button { display: ... }" beats the browser's own rule for the hidden attribute:
     # without this rule the attribute has no effect and the button shows on the sign-in screen.
     assert re.search(r"\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}", css)
+
+
+def test_app_detail_tells_the_install_context_and_the_notification_setting(client):
+    detail = client.get("/api/apps/app-2").json()
+    assert detail["app"]["run_as"] == "system"
+    assert detail["rollout"]["notifications"] == "showAll"
+    assert detail["assignments"][0]["notifications"] is None  # made outside the tool
+
+    client.app.state.intune.apps["app-2"]["installExperience"] = {"runAsAccount": "user"}
+    assert client.get("/api/apps/app-2").json()["app"]["run_as"] == "user"
+
+
+def test_notification_setting_is_saved_with_the_groups_and_validated(client):
+    quiet = {"name": "7-Zip", "notifications": "hideAll"}
+    saved = client.put("/api/apps/app-2/rollout", json=quiet)
+    assert saved.status_code == 200, saved.text
+    assert client.get("/api/apps/app-2").json()["rollout"]["notifications"] == "hideAll"
+    # Saving the groups alone does not reset it.
+    client.put("/api/apps/app-2/rollout", json={"name": "7-Zip"})
+    assert client.get("/api/apps/app-2").json()["rollout"]["notifications"] == "hideAll"
+
+    refused = client.put("/api/apps/app-2/rollout", json={"notifications": "nothing"})
+    assert refused.status_code == 400
+    assert refused.json()["error"]["code"] == "error.bad_notifications"
+
+
+def test_review_form_of_an_update_carries_the_current_settings(client):
+    intune = client.app.state.intune
+    intune.apps["app-3"]["installExperience"] = {"runAsAccount": "user"}
+    client.put("/api/apps/app-3/rollout", json={"name": "Notepad++", "notifications": "showReboot"})
+    response = client.post(
+        "/api/analyze/upload",
+        files={"file": ("npp.8.7.0.Installer.x64.exe", b"MZ" + b"\\x00" * 4096)},
+        data={"app_id": "app-3"},
+    )
+    job = wait(client, response.json()["id"], {"ready", "error"})
+    assert job["state"] == "ready", job
+    assert job["result"]["form"]["run_as"] == "user"
+    assert job["result"]["rollout"]["notifications"] == "showReboot"
+
+    form = job["result"]["form"]
+    form.update(mode="supersede", rollout="none", version="8.7.0", notifications="loud")
+    form["detection"]["value"] = "8.7.0"
+    apps_before = len(intune.apps)
+    refused = client.post(f"/api/jobs/{job['id']}/publish", json=form)
+    assert refused.status_code == 400
+    assert refused.json()["error"]["code"] == "error.bad_notifications"
+    assert len(intune.apps) == apps_before  # nothing was created

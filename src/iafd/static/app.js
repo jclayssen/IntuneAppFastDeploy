@@ -374,6 +374,14 @@ function stageEditor(title, hint, stage, options = {}) {
   return { node, value: () => ({ intent: state.intent, targets: state.targets }) };
 }
 
+// What people see on their device when Intune installs an application
+// (win32LobAppNotification), with the key of each label.
+const NOTIFY_KEYS = { showAll: "notify.show_all", showReboot: "notify.show_reboot", hideAll: "notify.hide_all" };
+
+function notifySelect(value) {
+  return select(Object.entries(NOTIFY_KEYS).map(([key, label]) => [key, t(label)]), value in NOTIFY_KEYS ? value : "showAll");
+}
+
 // ---------------------------------------------------------------- app detail
 
 async function showApp(appId) {
@@ -390,10 +398,13 @@ async function showApp(appId) {
   const message = h("div", {});
   const pilot = stageEditor(t("rollout.pilot"), t("rollout.pilot_hint"), detail.rollout.pilot);
   const prod = stageEditor(t("rollout.prod"), t("rollout.prod_hint"), detail.rollout.prod);
+  const notifications = notifySelect(detail.rollout.notifications);
   const assignmentText = (item) => {
     const label = { allDevices: t("target.all_devices"), allUsers: t("target.all_users"), exclusion: t("target.exclusion") }[item.type];
     const who = item.id ? `${label ? `${label}: ` : ""}${item.name ? `${item.name} (${item.id})` : item.id}` : label || t("target.other");
-    return `${t(`intent.${item.intent}`)} — ${who}`;
+    // Said only when it differs from what Intune does by default.
+    const quiet = item.notifications in NOTIFY_KEYS && item.notifications !== "showAll" ? ` — ${t(NOTIFY_KEYS[item.notifications])}` : "";
+    return `${t(`intent.${item.intent}`)} — ${who}${quiet}`;
   };
   show(
     h(
@@ -417,6 +428,7 @@ async function showApp(appId) {
         h("dt", {}, t("app.file")), h("dd", { class: "mono" }, app.file),
         h("dt", {}, t("form.install")), h("dd", { class: "mono" }, app.install_command),
         h("dt", {}, t("form.uninstall")), h("dd", { class: "mono" }, app.uninstall_command),
+        h("dt", {}, t("form.run_as")), h("dd", {}, t(app.run_as === "user" ? "run_as.user" : "run_as.system")),
         h("dt", {}, t("app.previous")),
         h("dd", {}, detail.older.length ? detail.older.map((item) => `${item.name} ${item.version}`).join(", ") : t("app.none")),
         h("dt", {}, t("app.assignments")),
@@ -430,13 +442,14 @@ async function showApp(appId) {
       h("p", { class: "muted" }, t("rollout.text")),
       pilot.node,
       prod.node,
+      field(t("notify.label"), notifications, t("notify.hint")),
       message,
       h(
         "div",
         { class: "row end" },
         button(t("action.save_groups"), async (event) => {
           try {
-            await busy(event.target, () => api("PUT", `/api/apps/${appId}/rollout`, { name: app.name, pilot: pilot.value(), prod: prod.value() }));
+            await busy(event.target, () => api("PUT", `/api/apps/${appId}/rollout`, { name: app.name, pilot: pilot.value(), prod: prod.value(), notifications: notifications.value }));
             showApp(appId);
           } catch (error) {
             message.replaceChildren(errorBox(error));
@@ -711,11 +724,14 @@ function showReview(job, appId) {
     );
     if (!hasPilot) target.querySelector('option[value="pilot"]').disabled = true;
     const cleanup = h("input", { type: "checkbox", checked: true });
+    const notifications = notifySelect(rollout.notifications);
+    const runAs = select([["system", t("run_as.system")], ["user", t("run_as.user")]], form.run_as);
     const superseding = h(
       "div",
       {},
       field(t("mode.type"), supersedence, t("mode.type_hint")),
       field(t("rollout.where"), target, hasPilot ? t("rollout.where_hint") : t("rollout.no_pilot_hint")),
+      field(t("notify.label"), notifications, t("notify.hint")),
       older.length
         ? h("label", { class: "check" }, cleanup, h("span", {}, t("mode.cleanup", { names: older.map((item) => `${item.name} ${item.version}`).join(", ") })))
         : null,
@@ -725,14 +741,15 @@ function showReview(job, appId) {
       superseding.hidden = mode.value !== "supersede";
       inplace.hidden = mode.value !== "inplace";
     });
-    options = h("div", { class: "panel" }, h("h2", {}, t("mode.title")), field(t("mode.label"), mode), superseding, inplace);
-    extra = () => ({ mode: mode.value, supersedence_type: supersedence.value, rollout: target.value, cleanup_old: cleanup.checked });
+    options = h("div", { class: "panel" }, h("h2", {}, t("mode.title")), field(t("mode.label"), mode), superseding, inplace, field(t("form.run_as"), runAs, t("form.run_as_update_hint")));
+    extra = () => ({ mode: mode.value, supersedence_type: supersedence.value, rollout: target.value, cleanup_old: cleanup.checked, run_as: runAs.value, notifications: notifications.value });
   } else {
     const architecture = select([["any", t("arch.any")], ["x64", "x64"], ["x86", "x86"], ["arm64", "ARM64"]], form.architecture);
     const runAs = select([["system", t("run_as.system")], ["user", t("run_as.user")]], form.run_as);
     const pilot = stageEditor(t("rollout.pilot"), t("rollout.pilot_hint"), rollout.pilot);
     const prod = stageEditor(t("rollout.prod"), t("rollout.prod_hint"), rollout.prod);
     const target = select([["none", t("rollout.to_none")], ["pilot", t("rollout.to_pilot")], ["prod", t("rollout.to_prod")]], "none");
+    const notifications = notifySelect(rollout.notifications);
     options = h(
       "div",
       { class: "panel" },
@@ -740,9 +757,10 @@ function showReview(job, appId) {
       h("div", { class: "two" }, h("div", {}, field(t("form.architecture"), architecture)), h("div", {}, field(t("form.run_as"), runAs))),
       pilot.node,
       prod.node,
+      field(t("notify.label"), notifications, t("notify.hint")),
       field(t("rollout.where"), target),
     );
-    extra = () => ({ mode: "new", architecture: architecture.value, run_as: runAs.value, pilot: pilot.value(), prod: prod.value(), rollout: target.value });
+    extra = () => ({ mode: "new", architecture: architecture.value, run_as: runAs.value, pilot: pilot.value(), prod: prod.value(), rollout: target.value, notifications: notifications.value });
   }
 
   const publish = async (event) => {

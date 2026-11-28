@@ -26,6 +26,7 @@ class FakeIntune:
         self.blocks: dict[str, bytes] = {}
         self.committed_blob: bytes | None = None
         self.calls: list[tuple[str, str]] = []
+        self.patches: list[dict] = []  # bodies of the PATCH requests on apps, in order
         self.fail_commit = False
         self.devices: dict[str, dict] = {}
         self.installed: dict[str, list[tuple[str, str, str]]] = {}  # device id -> software
@@ -407,6 +408,7 @@ class FakeIntune:
         if rest == "" and method == "GET":
             return httpx.Response(200, json=app)
         if rest == "" and method == "PATCH":
+            self.patches.append(body)
             app.update(body)
             return httpx.Response(204)
         if rest == "" and method == "DELETE":

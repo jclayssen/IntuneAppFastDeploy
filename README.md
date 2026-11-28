@@ -191,7 +191,7 @@ docker compose down
    - **Detected in the file**: file name, size, installer type and SHA-256 fingerprint. Compare the fingerprint with the one published by the vendor when there is one.
    - **Application**: name, version, commands. The setup file name inside the install command is replaced automatically.
    - **Detection rule**: how Intune knows the new version is installed. An MSI product code or a "version greater than or equal to" rule is moved to the new version automatically. Read the yellow notes when there are any.
-   - **How to update**: the method, and who receives the new version first.
+   - **How to update**: the method, who receives the new version first, the notifications people see, and **Install as** (System or User), taken from the current application.
 4. Click **Publish to Intune**. The progress is shown step by step.
 
 The link must return the installer itself. A page where you still have to click a button is refused with the message *"The link does not return an MSI or EXE file"*: copy the link of the final download button instead.
@@ -203,7 +203,8 @@ Click **New application**, give the link, then fill in:
 - **Install command**: proposed automatically for MSI files and for recognized EXE installers. Otherwise add the silent switch given by the vendor (often `/S`, `/silent` or `/quiet`).
 - **Uninstall command**: automatic for an MSI. For an EXE it cannot be read from the file; the screen shows the usual form for the recognized installer.
 - **Detection rule**: for an EXE, the simplest reliable rule is *File*, with the folder and name of the main program and *Version greater than or equal to*.
-- **Pilot and production groups**, and who receives the application now.
+- **Architecture** and **Install as**: *System* (the usual choice: the installer runs with the rights of the device) or *User* (it runs in the session of the signed-in person, for software that installs per user). A per-user MSI is proposed as *User*, everything else as *System*.
+- **Pilot and production groups**, the notifications people see, and who receives the application now.
 
 ### The two update methods
 
@@ -215,6 +216,14 @@ Click **New application**, give the link, then fill in:
 | Old versions | Two kept; the oldest is deleted when a third is published | Nothing to clean up |
 
 Deleting the oldest version is announced on the review screen, with a checkbox to keep it. It happens only after the new version has been published successfully, and it cannot be undone.
+
+### System or user installation
+
+**Install as** is the *install behavior* of the Intune portal (`installExperience.runAsAccount` in Microsoft Graph). The application page shows it, and so does the review screen of an update, filled with the value of the current application:
+
+- Left as it is, nothing changes: the new application is a copy of the current one, and an in-place update does not send this setting at all.
+- Changed with *New application that replaces the current one*: the new application is created with the new value; the previous version keeps its own.
+- Changed with *Modify the existing application*: the tool asks Intune to change it on the application itself. This request has not been tried on a real tenant, and the Intune portal does not always allow this change on an existing application: if Intune refuses, the error is shown and you can publish again with the first method.
 
 ## Pilot and production groups
 
@@ -230,6 +239,22 @@ For each one you choose *Required* or *Available*, and add groups:
 - With `ENABLE_GROUP_PICKER: "true"` (see step 1), a search box finds groups by name.
 
 When you publish a new version you choose *The pilot groups first*, *Production directly* or *Nobody for now*. During the pilot phase the application page shows the **Pilot** badge and the **Go to production** button.
+
+### Notifications to users
+
+**Notifications to users**, under the groups, is what people see on their device when Intune installs the application. It is the *End user notifications* setting of an assignment in the Intune portal:
+
+| Choice | On the device |
+|---|---|
+| Show all notifications (default) | The usual Intune messages: download, installation, restart |
+| Show only restart notifications | Nothing, except when a restart is needed |
+| Hide all notifications | Nothing |
+
+The tool uses it for every assignment it creates: the pilot groups, the production groups, and the ones added by **Go to production**. You can set it on the application page (saved with **Save groups**), when adding an application, and when publishing a new version with the first method.
+
+- Assignments that already exist in Intune are not changed when you save the setting: it applies from the next assignment the tool creates. To change an assignment that is already there, use the Intune portal.
+- When no production group is configured, the assignments of the previous version are copied as they are, with the notifications they have in Intune.
+- The application page tells it next to an assignment when it is not *Show all notifications*.
 
 These settings follow the application from one version to the next. They are stored in `config/rollout.json` only — nothing is written in the Notes field or anywhere else in Intune.
 
@@ -528,6 +553,8 @@ Run the interface against a simulated Intune, without sign-in (development only)
 uv run python -m tests.demo
 ```
 
+It listens on port 8080. When that port is taken (by the tool itself, for instance), set `PORT` to another one and give the address to the screenshot script: `PORT=8090 uv run python -m tests.demo`, then `node docs/screenshots/make.js en http://localhost:8090`.
+
 Layout:
 
 | Path | Role |
@@ -554,7 +581,7 @@ node docs/screenshots/make.js fr
 
 ### Microsoft Graph reference
 
-The tool uses the beta endpoint of Microsoft Graph. Pages the code was checked against: [deviceHealthScript](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-devicehealthscript?view=graph-rest-beta), [initiateOnDemandProactiveRemediation](https://learn.microsoft.com/en-us/graph/api/intune-devices-manageddevice-initiateondemandproactiveremediation?view=graph-rest-beta), [win32LobAppPowerShellScriptRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapppowershellscriptrule?view=graph-rest-beta), [mobileAppInstallStatus](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappinstallstatus?view=graph-rest-beta), [detectedApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-detectedapp?view=graph-rest-beta), [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta).
+The tool uses the beta endpoint of Microsoft Graph. Pages the code was checked against: [deviceHealthScript](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-devicehealthscript?view=graph-rest-beta), [initiateOnDemandProactiveRemediation](https://learn.microsoft.com/en-us/graph/api/intune-devices-manageddevice-initiateondemandproactiveremediation?view=graph-rest-beta), [win32LobAppPowerShellScriptRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapppowershellscriptrule?view=graph-rest-beta), [mobileAppInstallStatus](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappinstallstatus?view=graph-rest-beta), [detectedApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-detectedapp?view=graph-rest-beta), [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta), [win32LobAppInstallExperience](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappinstallexperience?view=graph-rest-beta), [runAsAccountType](https://learn.microsoft.com/en-us/graph/api/resources/intune-shared-runasaccounttype?view=graph-rest-beta), [win32LobAppNotification](https://learn.microsoft.com/en-us/graph/api/resources/intune-shared-win32lobappnotification?view=graph-rest-beta), [update win32LobApp](https://learn.microsoft.com/en-us/graph/api/intune-apps-win32lobapp-update?view=graph-rest-beta).
 
 ## Adding a language
 
