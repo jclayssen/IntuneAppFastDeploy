@@ -273,7 +273,7 @@ Ouvrez une application (cliquez sur son nom) pour configurer, application par ap
 Pour chacun, vous choisissez comment Intune installe l'application :
 
 - *Obligatoire* : Intune l'installe de lui-même sur les postes des cibles.
-- *Disponible* : elle est proposée dans le Portail d'entreprise et chacun l'installe s'il le souhaite. Intune ne propose une application qu'à des groupes d'utilisateurs.
+- *Disponible* : elle est proposée dans le Portail d'entreprise et chacun l'installe s'il le souhaite.
 
 Puis vous ajoutez des cibles :
 
@@ -290,7 +290,7 @@ Au moment de publier une nouvelle version, vous choisissez qui la reçoit :
 | Choix | Qui reçoit la nouvelle version |
 |---|---|
 | *Les groupes pilotes d'abord* | Seulement les groupes pilotes. **Passer en production**, sur la page de l'application, ajoute ensuite les groupes de production. |
-| *La production directement* | Les groupes pilotes et les groupes de production, dès la publication. Sans groupe de production configuré, les affectations de la version précédente sont reprises. |
+| *La production directement* | Les groupes de production, et les groupes pilotes s'il y en a, dès la publication. Sans groupe de production configuré, les affectations de la version précédente sont reprises. |
 | *Personne pour l'instant* | Personne : l'application est créée dans Intune sans affectation, jusqu'à ce que vous l'affectiez dans le portail Intune. |
 
 Pendant la phase pilote, la page de l'application affiche le badge **Pilote** et le bouton **Passer en production**.

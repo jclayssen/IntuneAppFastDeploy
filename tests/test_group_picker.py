@@ -58,6 +58,17 @@ def test_config_says_the_search_is_on_and_groups_are_found_by_the_start_of_their
         assert client.get("/api/groups", params={"q": "zzz"}).json()["groups"] == []
 
 
+def test_a_name_with_an_apostrophe_is_searched_as_typed():
+    app = build(group_picker=True)
+    app.state.intune.directory["55555555-5555-5555-5555-000000000099"] = "L'atelier"
+    with TestClient(app) as client:
+        client.headers["X-IAFD"] = "1"
+        found = client.get("/api/groups", params={"q": "l'at"}).json()["groups"]
+        assert [group["name"] for group in found] == ["L'atelier"]
+        # A quote cannot end the filter and add a condition of its own.
+        assert client.get("/api/groups", params={"q": "x') or ('"}).json()["groups"] == []
+
+
 def test_the_option_adds_exactly_one_read_only_permission():
     assert permission() == "GroupMember.Read.All"
 

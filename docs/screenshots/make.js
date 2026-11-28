@@ -50,7 +50,7 @@ const PILOT = { en: "Pilot - IT team", fr: "Pilote - équipe informatique" }[lan
   const pilot = page.locator(".stage").nth(0);
 
   // 14. Choosing groups: the search by name is announced where it would be, with how to enable it.
-  const guide = pilot.locator("details summary").first();
+  const guide = pilot.locator(".ge-off details summary");
   await guide.click();
   await page.mouse.move(0, 0);
   await page.evaluate(() => document.activeElement && document.activeElement.blur());

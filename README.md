@@ -271,7 +271,7 @@ Open an application (click its name) to configure, per application:
 For each one you choose how Intune installs the application:
 
 - *Required*: Intune installs it by itself on the devices of the targets.
-- *Available*: it is offered in the Company Portal and each person installs it if they want. Intune only offers an application to groups of users.
+- *Available*: it is offered in the Company Portal and each person installs it if they want.
 
 Then you add targets:
 
@@ -288,7 +288,7 @@ When you publish a new version you choose who receives it:
 | Choice | Who receives the new version |
 |---|---|
 | *The pilot groups first* | Only the pilot groups. **Go to production**, on the application page, then adds the production groups. |
-| *Production directly* | The pilot groups and the production groups, as soon as it is published. With no production group configured, the assignments of the previous version are reused. |
+| *Production directly* | The production groups, and the pilot groups if there are any, as soon as it is published. With no production group configured, the assignments of the previous version are reused. |
 | *Nobody for now* | Nobody: the application is created in Intune with no assignment, until you assign it in the Intune portal. |
 
 During the pilot phase the application page shows the **Pilot** badge and the **Go to production** button.

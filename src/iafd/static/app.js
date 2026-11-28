@@ -346,8 +346,9 @@ function groupSearch(uid, add) {
   let request = 0;
   query.addEventListener("input", () => {
     clearTimeout(timer);
+    // What is typed now makes every answer still on its way out of date.
+    const mine = ++request;
     timer = setTimeout(async () => {
-      const mine = ++request;
       results.replaceChildren(h("span", { class: "muted" }, t("groups.searching")));
       try {
         const found = (await api("GET", `/api/groups?q=${encodeURIComponent(query.value)}`)).groups;
@@ -385,6 +386,11 @@ function stageEditor(title, hint, stage, options = {}) {
   const chips = h("div", { class: "chips", role: "group", tabIndex: -1, "aria-labelledby": `${uid}-chosen` });
   const message = h("div", { role: "alert", id: `${uid}-error` });
   const status = h("p", { class: "ge-status", role: "status" });
+  // Emptied first, filled a frame later: a screen reader then reads the same sentence twice in a row.
+  const say = (text) => {
+    status.textContent = "";
+    requestAnimationFrame(() => { status.textContent = text; });
+  };
   const draw = () => {
     chips.replaceChildren(
       ...(state.targets.length
@@ -401,8 +407,8 @@ function stageEditor(title, hint, stage, options = {}) {
   };
   // The removed chip had the focus: hand it to its neighbour, or to the list when it is empty.
   const remove = (index) => {
-    state.targets.splice(index, 1);
-    status.textContent = "";
+    const [removed] = state.targets.splice(index, 1);
+    say(t("groups.removed", { name: removed.name || targetLabel(removed) }));
     draw();
     const buttons = chips.querySelectorAll("button");
     (buttons[Math.min(index, buttons.length - 1)] || chips).focus();
@@ -410,16 +416,16 @@ function stageEditor(title, hint, stage, options = {}) {
   // Returns false when the target is refused, so that what was typed is kept.
   const add = (target) => {
     message.replaceChildren();
-    status.textContent = "";
     const key = target.type === "group" ? target.id.toLowerCase() : target.type;
     if (target.type === "group" && !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(target.id)) {
       message.replaceChildren(h("div", { class: "notice error" }, t("error.bad_group_id")));
+      status.textContent = "";
       return false;
     }
     const known = state.targets.some((item) => (item.type === "group" ? item.id.toLowerCase() : item.type) === key);
     if (!known) state.targets.push(target);
     draw();
-    status.textContent = t(known ? "groups.already" : "groups.added", { name: target.name || targetLabel(target) });
+    say(t(known ? "groups.already" : "groups.added", { name: target.name || targetLabel(target) }));
     return true;
   };
   const intent = select([["required", t("intent.required")], ["available", t("intent.available")]], state.intent, {
@@ -438,7 +444,7 @@ function stageEditor(title, hint, stage, options = {}) {
   };
   for (const control of [groupId, groupName]) {
     control.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter") return;
+      if (event.key !== "Enter" || event.isComposing) return;
       event.preventDefault();
       addManual();
     });
@@ -977,7 +983,7 @@ function showReview(job, appId) {
     const architecture = select([["any", t("arch.any")], ["x64", "x64"], ["x86", "x86"], ["arm64", "ARM64"]], form.architecture);
     const runAs = select([["system", t("run_as.system")], ["user", t("run_as.user")]], form.run_as);
     const pilot = stageEditor(t("rollout.pilot"), t("rollout.pilot_hint"), rollout.pilot);
-    const prod = stageEditor(t("rollout.prod"), t("rollout.prod_hint"), rollout.prod);
+    const prod = stageEditor(t("rollout.prod"), t("rollout.prod_hint_new"), rollout.prod);
     const target = select([["none", t("rollout.to_none")], ["pilot", t("rollout.to_pilot")], ["prod", t("rollout.to_prod")]], "none");
     const notifications = notifySelect(rollout.notifications);
     options = h(
