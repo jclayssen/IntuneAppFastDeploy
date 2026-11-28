@@ -48,8 +48,17 @@ const PILOT = { en: "Pilot - IT team", fr: "Pilote - équipe informatique" }[lan
   await page.click("text=7-Zip 23.01 (x64 edition)");
   await page.waitForSelector("dl.facts");
   const pilot = page.locator(".stage").nth(0);
-  await pilot.locator("input.mono").fill("3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f");
-  await pilot.locator("input:not(.mono)").fill(PILOT);
+
+  // 14. Choosing groups: the search by name is announced where it would be, with how to enable it.
+  const guide = pilot.locator(".ge-off details summary");
+  await guide.click();
+  await page.mouse.move(0, 0);
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  await pilot.screenshot({ path: path.join(out, "14-group-search-setup.png") });
+  await guide.click();
+
+  await pilot.locator("input.ge-id").fill("3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f");
+  await pilot.locator("input.ge-name").fill(PILOT);
   await pilot.locator(`button:has-text("${t("action.add_group")}")`).click();
   await page.locator(".stage").nth(1).locator(`button:has-text("${t("target.all_devices")}")`).click();
   await button("action.save_groups").click();

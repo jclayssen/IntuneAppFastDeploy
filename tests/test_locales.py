@@ -10,7 +10,7 @@ LOCALES = {
 }
 PREFIXES = (
     "error|warning|step|action|apps|app|stage|intent|target|rollout|wizard|review|form|arch"
-    "|run_as|detection|mode|done|setup|login|footer|nav|inventory|removal|replace|notify|advanced"
+    "|run_as|detection|mode|done|setup|login|footer|nav|inventory|removal|replace|notify|advanced|groups"
 )
 NOT_KEYS = {"rollout.json", "app.exe", "app.js"}
 
@@ -33,6 +33,17 @@ def test_every_used_key_is_translated_everywhere():
     for code, texts in LOCALES.items():
         missing = sorted(keys - set(texts))
         assert not missing, f"{code}: {missing}"
+
+
+def test_placeholders_and_markup_match_in_every_language():
+    """A text takes the same {values} everywhere, and its `code` and **labels** are closed."""
+    reference = LOCALES["en"]
+    for code, texts in LOCALES.items():
+        for key, text in texts.items():
+            assert text.count("`") % 2 == 0, f"{code}: {key}"
+            assert text.count("**") % 2 == 0, f"{code}: {key}"
+            wanted = sorted(re.findall(r"\{[a-z_]+\}", reference.get(key, text)))
+            assert sorted(re.findall(r"\{[a-z_]+\}", text)) == wanted, f"{code}: {key}"
 
 
 def test_all_languages_have_the_same_keys():

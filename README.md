@@ -116,7 +116,7 @@ These screens come from the built-in demo, which runs against a simulated Intune
 
 This tells Microsoft that the tool exists in *your* tenant. It takes about five minutes and is done once.
 
-1. Open <https://entra.microsoft.com> and go to **Identity → Applications → App registrations → New registration**.
+1. Open <https://entra.microsoft.com> and go to **Entra ID → App registrations → New registration**.
 2. **Name**: `IntuneAppFastDeploy` (any name works).
 3. **Supported account types**: *Accounts in this organizational directory only (single tenant)*.
 4. **Redirect URI**: choose the platform **Public client/native (mobile & desktop)** and enter:
@@ -134,7 +134,13 @@ This tells Microsoft that the tool exists in *your* tenant. It takes about five 
 
 No client secret is needed: the registration is a *public client* and each person signs in with their own account.
 
-**Optional — search groups by name.** By default you paste the Object ID of a group. To search groups by name instead, also add the delegated permission `GroupMember.Read.All`, grant admin consent again, and set `ENABLE_GROUP_PICKER: "true"` in `docker-compose.yml`.
+**Optional — search groups by name.** By default you paste the Object ID of a group. The tool can also search your groups by name. Wherever a group is chosen, the interface says that this search exists and shows the same steps under **How to enable the search by name**. Follow them in this order: a permission that has not been consented makes sign-in fail.
+
+1. In the app registration: **API permissions → Add a permission → Microsoft Graph → Delegated permissions**, search for `GroupMember.Read.All`, tick it and click **Add permissions**.
+2. Click **Grant admin consent for \<your organization\>** again. The status column must show a green tick next to `GroupMember.Read.All`.
+3. Only then, set `ENABLE_GROUP_PICKER: "true"` in `docker-compose.yml` (step 2) and run `docker compose up -d`. Everyone signs in again.
+
+To go back, set it to `"false"` again and run `docker compose up -d`. `GroupMember.Read.All` is read-only (groups and their members) and the tool only uses it for this search.
 
 ## Step 2 — Install on your PC
 
@@ -261,16 +267,33 @@ Left to the Intune portal, because each needs a screen of its own: requirement r
 
 Open an application (click its name) to configure, per application:
 
-- **Pilot**: the groups that receive a new version first.
-- **Production**: the groups added when you click **Go to production**. If you leave it empty, the assignments of the previous version are reused.
+- **Pilot**: the groups that receive a new version first, to try it. Used when you publish with *The pilot groups first*.
+- **Production**: the groups that receive it next: added when you click **Go to production**, or at once when you publish with *Production directly*. If you leave it empty, the assignments of the previous version are reused.
 
-For each one you choose *Required* or *Available*, and add groups:
+For each one you choose how Intune installs the application:
 
-- **All devices** / **All users**: one click.
-- **A group**: paste its **Object ID**. You find it in the Entra admin center under **Groups → \<the group\> → Overview → Object ID**. The label is only a reminder for you.
-- With `ENABLE_GROUP_PICKER: "true"` (see step 1), a search box finds groups by name.
+- *Required*: Intune installs it by itself on the devices of the targets.
+- *Available*: it is offered in the Company Portal and each person installs it if they want.
 
-When you publish a new version you choose *The pilot groups first*, *Production directly* or *Nobody for now*. During the pilot phase the application page shows the **Pilot** badge and the **Go to production** button.
+Then you add targets:
+
+- **All devices** / **All users**: one click. Every device enrolled in Intune, or every user of your organization, with no group to create or keep up to date.
+- **A group**: paste its **Object ID**. You find it in the Entra admin center under **Entra ID → Groups → All groups → \<the group\> → Overview → Object ID**. The label is only a reminder for you: it is shown instead of the identifier, stays in `config/rollout.json` and is not sent to Intune.
+- **Search a group by name**: with `ENABLE_GROUP_PICKER: "true"` (see [step 1](#step-1--create-the-app-registration-in-microsoft-entra-id)), a search box finds the groups of Microsoft Entra ID by the start of their name, 20 at most. While the option is off, the same place says that the search exists and unfolds the steps to enable it, so nobody has to leave the tool to find out.
+
+<img src="docs/screenshots/en/14-group-search-setup.png" alt="Pilot block of an application page: the search by name marked as not enabled with the steps to enable it unfolded, the Object ID and label fields, and the All devices and All users buttons" width="780">
+
+Every part of these screens carries a short explanation of what it does. **Save groups** only records the settings on the server: nothing changes in Intune until the next publication or **Go to production**. What Intune applies today is on the **Assignments** line of the application page.
+
+When you publish a new version you choose who receives it:
+
+| Choice | Who receives the new version |
+|---|---|
+| *The pilot groups first* | Only the pilot groups. **Go to production**, on the application page, then adds the production groups. |
+| *Production directly* | The production groups, and the pilot groups if there are any, as soon as it is published. With no production group configured, the assignments of the previous version are reused. |
+| *Nobody for now* | Nobody: the application is created in Intune with no assignment, until you assign it in the Intune portal. |
+
+During the pilot phase the application page shows the **Pilot** badge and the **Go to production** button.
 
 ### Notifications to users
 
@@ -391,7 +414,7 @@ These checks are made by the server, not only by the interface.
 
 ### Removing an application Intune installed
 
-On the page of an Intune application, **Remove from devices** assigns that application with the Uninstall intent to the targets you choose; Intune then uses the application's own uninstall command. **Stop removing** withdraws it.
+On the page of an Intune application, **Remove from devices** assigns that application with the Uninstall intent to the targets you choose; Intune then uses the application's own uninstall command. **Stop removing** withdraws it: no device is targeted any more, and the application is not put back where it was removed.
 
 ### What to know
 
@@ -587,6 +610,8 @@ uv run python -m tests.demo
 ```
 
 It listens on port 8080. When that port is taken (by the tool itself, for instance), set `PORT` to another one and give the address to the screenshot script: `PORT=8090 uv run python -m tests.demo`, then `node docs/screenshots/make.js en http://localhost:8090`.
+
+The demo starts with the search of groups by name turned off, as a fresh installation does. To see it enabled, with a few simulated groups to find: `GROUP_PICKER=true uv run python -m tests.demo`.
 
 Layout:
 

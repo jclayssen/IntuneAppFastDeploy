@@ -355,10 +355,113 @@ function targetLabel(target) {
   return target.name ? `${target.name} (${target.id})` : target.id;
 }
 
+// The guides carry a little markup: `code`, **a label of the interface** and https links.
+// Built as nodes, never as HTML.
+function rich(text) {
+  return text.split(/(`[^`]+`|\*\*[^*]+\*\*|https:\/\/[^\s)]+)/).map((part) => {
+    if (/^`.+`$/.test(part)) return h("code", { class: "ge-code" }, part.slice(1, -1));
+    if (/^\*\*.+\*\*$/.test(part)) return h("strong", {}, part.slice(2, -2));
+    if (part.startsWith("https://")) return h("a", { href: part, target: "_blank", rel: "noopener noreferrer" }, part.slice(8));
+    return part;
+  });
+}
+
+// Short explanations, one per line; what is absent is skipped.
+function notes(...texts) {
+  return h("ul", { class: "ge-notes" }, texts.filter(Boolean).map((text) => h("li", {}, rich(text))));
+}
+
+// The explanation of the choice a select shows, kept in step with it.
+function explained(control, textFor, id) {
+  const hint = h("p", { class: "hint ge-hint", id });
+  const sync = () => hint.replaceChildren(...rich(textFor(control.value)));
+  control.setAttribute("aria-describedby", id);
+  control.addEventListener("change", sync);
+  sync();
+  return hint;
+}
+
+// Enabling the search of groups by name, in the order that keeps sign-in working.
+const GROUP_SETUP_STEPS = ["groups.setup_step1", "groups.setup_step2", "groups.setup_step3", "groups.setup_step4", "groups.setup_step5"];
+const GROUP_ID_SHAPE = "00000000-0000-0000-0000-000000000000";
+let groupEditors = 0;
+
+// Shown where the search would be when ENABLE_GROUP_PICKER is off: says it exists and how to enable it.
+function groupSearchOff(uid) {
+  return h(
+    "div",
+    { class: "ge-part ge-off" },
+    h("div", { class: "ge-head" }, h("label", { class: "ge-label", for: `${uid}-search` }, t("rollout.search_group")), h("span", { class: "badge" }, t("groups.search_off"))),
+    h("input", { type: "search", id: `${uid}-search`, disabled: true, placeholder: t("groups.search_placeholder"), "aria-describedby": `${uid}-search-help` }),
+    h("p", { class: "ge-help", id: `${uid}-search-help` }, t("groups.search_teaser")),
+    h(
+      "details",
+      { class: "ge-more" },
+      h("summary", {}, t("groups.setup_show")),
+      h(
+        "div",
+        { class: "ge-guide" },
+        h("p", {}, t("groups.setup_intro")),
+        h("ol", {}, GROUP_SETUP_STEPS.map((key) => h("li", {}, rich(t(key))))),
+        h("p", { class: "notice" }, rich(t("groups.setup_order"))),
+        h("p", { class: "ge-help" }, rich(t("groups.setup_scope"))),
+      ),
+    ),
+  );
+}
+
+function groupSearch(uid, add) {
+  const results = h("div", { class: "results ge-results", "aria-live": "polite" });
+  const query = h("input", { type: "search", id: `${uid}-search`, placeholder: t("groups.search_placeholder"), autocomplete: "off", "aria-describedby": `${uid}-search-help` });
+  let timer;
+  let request = 0;
+  query.addEventListener("input", () => {
+    clearTimeout(timer);
+    // What is typed now makes every answer still on its way out of date.
+    const mine = ++request;
+    timer = setTimeout(async () => {
+      results.replaceChildren(h("span", { class: "muted" }, t("groups.searching")));
+      try {
+        const found = (await api("GET", `/api/groups?q=${encodeURIComponent(query.value)}`)).groups;
+        if (mine !== request) return;
+        results.replaceChildren(
+          ...(found.length
+            ? found.map((group) =>
+                h(
+                  "button",
+                  { type: "button", class: "linkish ge-result", onclick: () => add({ type: "group", id: group.id, name: group.name }) },
+                  h("span", {}, group.name),
+                  h("span", { class: "mono muted" }, group.id),
+                ),
+              )
+            : [h("span", { class: "muted" }, t("rollout.no_result"))]),
+        );
+      } catch (error) {
+        if (mine === request) results.replaceChildren(errorBox(error));
+      }
+    }, 300);
+  });
+  return h(
+    "div",
+    { class: "ge-part" },
+    h("label", { class: "ge-label", for: `${uid}-search` }, t("rollout.search_group")),
+    query,
+    h("p", { class: "ge-help", id: `${uid}-search-help` }, t("groups.search_hint")),
+    results,
+  );
+}
+
 function stageEditor(title, hint, stage, options = {}) {
+  const uid = `ge-${++groupEditors}`;
   const state = { intent: stage?.intent || "required", targets: [...(stage?.targets || [])] };
-  const chips = h("div", { class: "chips" });
-  const message = h("div", {});
+  const chips = h("div", { class: "chips", role: "group", tabIndex: -1, "aria-labelledby": `${uid}-chosen` });
+  const message = h("div", { role: "alert", id: `${uid}-error` });
+  const status = h("p", { class: "ge-status", role: "status" });
+  // Emptied first, filled a frame later: a screen reader then reads the same sentence twice in a row.
+  const say = (text) => {
+    status.textContent = "";
+    requestAnimationFrame(() => { status.textContent = text; });
+  };
   const draw = () => {
     chips.replaceChildren(
       ...(state.targets.length
@@ -367,79 +470,105 @@ function stageEditor(title, hint, stage, options = {}) {
               "span",
               { class: "chip" },
               targetLabel(target),
-              h("button", { type: "button", "aria-label": t("action.remove"), onclick: () => { state.targets.splice(index, 1); draw(); } }, "×"),
+              h("button", { type: "button", "aria-label": `${t("action.remove")} — ${targetLabel(target)}`, onclick: () => remove(index) }, "×"),
             ),
           )
         : [h("span", { class: "muted" }, t("rollout.no_group"))]),
     );
   };
+  // The removed chip had the focus: hand it to its neighbour, or to the list when it is empty.
+  const remove = (index) => {
+    const [removed] = state.targets.splice(index, 1);
+    say(t("groups.removed", { name: removed.name || targetLabel(removed) }));
+    draw();
+    const buttons = chips.querySelectorAll("button");
+    (buttons[Math.min(index, buttons.length - 1)] || chips).focus();
+  };
+  // Returns false when the target is refused, so that what was typed is kept.
   const add = (target) => {
     message.replaceChildren();
     const key = target.type === "group" ? target.id.toLowerCase() : target.type;
     if (target.type === "group" && !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(target.id)) {
       message.replaceChildren(h("div", { class: "notice error" }, t("error.bad_group_id")));
-      return;
+      status.textContent = "";
+      return false;
     }
-    if (!state.targets.some((item) => (item.type === "group" ? item.id.toLowerCase() : item.type) === key)) {
-      state.targets.push(target);
-    }
+    const known = state.targets.some((item) => (item.type === "group" ? item.id.toLowerCase() : item.type) === key);
+    if (!known) state.targets.push(target);
     draw();
+    say(t(known ? "groups.already" : "groups.added", { name: target.name || targetLabel(target) }));
+    return true;
   };
   const intent = select([["required", t("intent.required")], ["available", t("intent.available")]], state.intent, {
     onchange: (event) => { state.intent = event.target.value; },
   });
-  const groupId = input("", { placeholder: t("rollout.group_id"), class: "mono grow" });
-  const groupName = input("", { placeholder: t("rollout.group_name"), class: "grow" });
-  const manual = h(
-    "div",
-    { class: "row" },
-    groupId,
-    groupName,
-    button(t("action.add_group"), () => {
-      add({ type: "group", id: groupId.value.trim(), name: groupName.value.trim() });
+  // The refusal is about what was typed: it goes away as soon as that changes.
+  const clearRefusal = (event) => {
+    event.target.removeAttribute("aria-invalid");
+    message.replaceChildren();
+  };
+  const groupId = input("", { id: `${uid}-id`, placeholder: GROUP_ID_SHAPE, class: "mono ge-id", autocomplete: "off", "aria-describedby": `${uid}-error`, oninput: clearRefusal });
+  const groupName = input("", { id: `${uid}-name`, placeholder: t("groups.label_placeholder"), class: "ge-name", autocomplete: "off", "aria-describedby": `${uid}-name-help` });
+  const addManual = () => {
+    const added = add({ type: "group", id: groupId.value.trim(), name: groupName.value.trim() });
+    if (!added) groupId.setAttribute("aria-invalid", "true");
+    if (added) {
       groupId.value = "";
       groupName.value = "";
-    }, "ghost small"),
-  );
-  let picker = null;
-  if (config.group_picker) {
-    const results = h("div", { class: "results" });
-    const query = h("input", { type: "search", placeholder: t("rollout.search_group"), class: "grow" });
-    let timer;
-    query.addEventListener("input", () => {
-      clearTimeout(timer);
-      timer = setTimeout(async () => {
-        try {
-          const found = (await api("GET", `/api/groups?q=${encodeURIComponent(query.value)}`)).groups;
-          results.replaceChildren(
-            ...(found.length
-              ? found.map((group) => button(group.name, () => add({ type: "group", id: group.id, name: group.name }), "linkish"))
-              : [h("span", { class: "muted" }, t("rollout.no_result"))]),
-          );
-        } catch (error) {
-          results.replaceChildren(errorBox(error));
-        }
-      }, 300);
+    }
+    groupId.focus();
+  };
+  for (const control of [groupId, groupName]) {
+    control.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.isComposing) return;
+      event.preventDefault();
+      addManual();
     });
-    picker = h("div", {}, query, results);
   }
+  const manual = h(
+    "div",
+    { class: "ge-part" },
+    h(
+      "div",
+      { class: "ge-fields" },
+      h("div", { class: "ge-field" }, h("label", { class: "ge-label", for: `${uid}-id` }, t("rollout.group_id")), groupId),
+      h("div", { class: "ge-field" }, h("label", { class: "ge-label", for: `${uid}-name` }, t("rollout.group_name")), groupName),
+      button(t("action.add_group"), addManual, "ghost"),
+    ),
+    message,
+    h("p", { class: "ge-help", id: `${uid}-name-help` }, t("groups.label_hint")),
+    h("details", { class: "ge-more" }, h("summary", {}, t("groups.find_id_show")), h("p", { class: "ge-guide" }, rich(t("groups.find_id_text")))),
+  );
+  const everyone = h(
+    "div",
+    { class: "ge-part" },
+    h("span", { class: "ge-label", id: `${uid}-everyone` }, t("groups.builtin_title")),
+    h(
+      "div",
+      { class: "row", role: "group", "aria-labelledby": `${uid}-everyone` },
+      button(t("target.all_devices"), () => add({ type: "allDevices" }), "ghost small"),
+      button(t("target.all_users"), () => add({ type: "allUsers" }), "ghost small"),
+    ),
+    notes(t("groups.all_devices_hint"), t("groups.all_users_hint")),
+  );
   draw();
   const node = h(
     "div",
-    { class: "stage" },
+    { class: "stage ge" },
     h("h3", {}, title),
     hint ? h("p", { class: "hint" }, hint) : null,
-    options.noIntent ? null : field(t("rollout.intent"), intent),
+    options.noIntent ? null : [...field(t("rollout.intent"), intent), notes(t("groups.intent_required_hint"), t("groups.intent_available_hint"))],
+    h("span", { class: "ge-label", id: `${uid}-chosen` }, t("groups.selected")),
     chips,
-    message,
-    picker,
-    picker ? null : manual,
-    picker ? h("details", {}, h("summary", { class: "muted" }, t("rollout.manual")), manual) : null,
+    status,
     h(
-      "div",
-      { class: "row" },
-      button(t("target.all_devices"), () => add({ type: "allDevices" }), "ghost small"),
-      button(t("target.all_users"), () => add({ type: "allUsers" }), "ghost small"),
+      "fieldset",
+      { class: "ge-add" },
+      h("legend", {}, t("groups.add_title")),
+      config.group_picker ? groupSearch(uid, add) : groupSearchOff(uid),
+      // With the search, typing an identifier is the exception: it stays folded.
+      config.group_picker ? h("details", { class: "ge-more" }, h("summary", {}, t("rollout.manual")), manual) : manual,
+      everyone,
     ),
   );
   return { node, value: () => ({ intent: state.intent, targets: state.targets }) };
@@ -451,6 +580,29 @@ const NOTIFY_KEYS = { showAll: "notify.show_all", showReboot: "notify.show_reboo
 
 function notifySelect(value) {
   return select(Object.entries(NOTIFY_KEYS).map(([key, label]) => [key, t(label)]), value in NOTIFY_KEYS ? value : "showAll");
+}
+
+const NOTIFY_HINTS = { showAll: "notify.show_all_hint", showReboot: "notify.show_reboot_hint", hideAll: "notify.hide_all_hint" };
+
+// The setting, what the chosen option shows on the device, then when it is used.
+function notifyField(control) {
+  const id = `notify-${++groupEditors}`;
+  return [...field(t("notify.label"), control), explained(control, (value) => t(NOTIFY_HINTS[value]), id), h("p", { class: "hint ge-after" }, t("notify.hint"))];
+}
+
+const WHERE_HINTS = { pilot: "rollout.to_pilot_hint", prod: "rollout.to_prod_hint", none: "rollout.to_none_hint" };
+
+// "Assign ... to": each choice says who receives the application when it is published.
+function whereField(control, isUpdate, hasPilot) {
+  const id = `where-${++groupEditors}`;
+  const textFor = (value) => {
+    const parts = [t(WHERE_HINTS[value])];
+    // Only an update has a previous version to copy the assignments from.
+    if (isUpdate && value === "prod") parts.push(t("rollout.to_prod_previous"));
+    if (isUpdate && !hasPilot) parts.push(t("rollout.no_pilot_hint"));
+    return parts.join(" ");
+  };
+  return [...field(t(isUpdate ? "rollout.where" : "rollout.where_new"), control), explained(control, textFor, id)];
 }
 
 // ---------------------------------------------------------------- advanced settings
@@ -603,7 +755,7 @@ async function showApp(appId) {
       h("p", { class: "muted" }, t("rollout.text")),
       pilot.node,
       prod.node,
-      field(t("notify.label"), notifications, t("notify.hint")),
+      notifyField(notifications),
       message,
       h(
         "div",
@@ -628,6 +780,7 @@ async function showApp(appId) {
             })
           : null,
       ),
+      notes(t("rollout.save_hint"), detail.can_promote ? t("rollout.promote_hint") : null),
     ),
     uninstallPanel(detail, appId),
   );
@@ -652,6 +805,7 @@ function uninstallPanel(detail, appId) {
     { class: "panel" },
     h("h2", {}, t("removal.app_title")),
     h("p", { class: "muted" }, t("removal.app_text")),
+    h("div", { class: "notice" }, t("removal.warning")),
     targets.node,
     message,
     h(
@@ -667,6 +821,7 @@ function uninstallPanel(detail, appId) {
         if (window.confirm(t("removal.app_confirm", { name: detail.app.name }))) send(list, event.target);
       }, "danger"),
     ),
+    active ? notes(t("removal.app_stop_hint")) : null,
   );
 }
 
@@ -899,8 +1054,8 @@ function showReview(job, appId) {
       "div",
       {},
       field(t("mode.type"), supersedence, t("mode.type_hint")),
-      field(t("rollout.where"), target, hasPilot ? t("rollout.where_hint") : t("rollout.no_pilot_hint")),
-      field(t("notify.label"), notifications, t("notify.hint")),
+      whereField(target, true, hasPilot),
+      notifyField(notifications),
       older.length
         ? h("label", { class: "check" }, cleanup, h("span", {}, t("mode.cleanup", { names: older.map((item) => `${item.name} ${item.version}`).join(", ") })))
         : null,
@@ -916,18 +1071,19 @@ function showReview(job, appId) {
     const architecture = select([["any", t("arch.any")], ["x64", "x64"], ["x86", "x86"], ["arm64", "ARM64"]], form.architecture);
     const runAs = select([["system", t("run_as.system")], ["user", t("run_as.user")]], form.run_as);
     const pilot = stageEditor(t("rollout.pilot"), t("rollout.pilot_hint"), rollout.pilot);
-    const prod = stageEditor(t("rollout.prod"), t("rollout.prod_hint"), rollout.prod);
+    const prod = stageEditor(t("rollout.prod"), t("rollout.prod_hint_new"), rollout.prod);
     const target = select([["none", t("rollout.to_none")], ["pilot", t("rollout.to_pilot")], ["prod", t("rollout.to_prod")]], "none");
     const notifications = notifySelect(rollout.notifications);
     options = h(
       "div",
       { class: "panel" },
       h("h2", {}, t("rollout.title")),
+      h("p", { class: "muted" }, t("rollout.text_new")),
       h("div", { class: "two" }, h("div", {}, field(t("form.architecture"), architecture)), h("div", {}, field(t("form.run_as"), runAs))),
       pilot.node,
       prod.node,
-      field(t("notify.label"), notifications, t("notify.hint")),
-      field(t("rollout.where"), target),
+      notifyField(notifications),
+      whereField(target, false, true),
     );
     extra = () => ({ mode: "new", architecture: architecture.value, run_as: runAs.value, pilot: pilot.value(), prod: prod.value(), rollout: target.value, notifications: notifications.value });
   }
@@ -1719,7 +1875,7 @@ async function showRemoval(ruleId) {
       resultsBody,
       detail.portal_url ? h("p", {}, h("a", { href: detail.portal_url, target: "_blank", rel: "noopener noreferrer" }, t("removal.open_portal"))) : h("p", { class: "hint" }, t("removal.on_demand_hint")),
     ),
-    onDemand ? null : h("div", { class: "panel" }, h("h2", {}, t("removal.where")), targets.node, h("div", { class: "row end" }, button(t("removal.save_targets"), saveTargets, "ghost"))),
+    onDemand ? null : h("div", { class: "panel" }, h("h2", {}, t("removal.where")), targets.node, h("div", { class: "row end" }, button(t("removal.save_targets"), saveTargets, "ghost")), notes(t("removal.save_targets_hint"))),
     !onDemand && config.device_groups ? devicePicker(rule) : null,
   );
 }

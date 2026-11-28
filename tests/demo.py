@@ -2,7 +2,8 @@
 
 For development and screenshots only:  uv run python -m tests.demo
 
-It listens on port 8080; set ``PORT`` to use another one.
+It listens on port 8080; set ``PORT`` to use another one. The search of groups by
+name is off, as in a fresh installation; set ``GROUP_PICKER=true`` to see it enabled.
 """
 
 from __future__ import annotations
@@ -160,10 +161,25 @@ def seed_devices(intune: FakeIntune) -> None:
         intune.add_device(name, user, software)
 
 
-def build():
+def seed_directory(intune: FakeIntune) -> None:
+    """Groups of the simulated tenant, found by the search of groups by name."""
+    names = [
+        "Pilot - IT team",
+        "Pilote - équipe informatique",
+        "Production - Accounting",
+        "Production - Reception",
+        "Production - Workshop",
+        "Shared laptops",
+    ]
+    for number, name in enumerate(names, start=1):
+        intune.directory[f"55555555-5555-5555-5555-{number:012d}"] = name
+
+
+def build(group_picker: bool = False):
     intune = FakeIntune()
     seed(intune)
     seed_devices(intune)
+    seed_directory(intune)
     # WinRAR stands for an EXE whose uninstaller has no silent mode declared.
     intune.no_silent = {"WinRAR 5.91 (64-bit)"}
     root = Path(tempfile.mkdtemp(prefix="iafd-demo-"))
@@ -173,6 +189,7 @@ def build():
         config_dir=root / "config",
         work_dir=root / "work",
         default_language="fr",
+        enable_group_picker=group_picker,
         enable_device_inventory=True,
         enable_remediations=True,
         enable_device_groups=True,
@@ -202,5 +219,8 @@ def build():
 
 if __name__ == "__main__":
     uvicorn.run(
-        build(), host="127.0.0.1", port=int(os.environ.get("PORT", "8080")), log_level="warning"
+        build(group_picker=os.environ.get("GROUP_PICKER", "").lower() in ("1", "true")),
+        host="127.0.0.1",
+        port=int(os.environ.get("PORT", "8080")),
+        log_level="warning",
     )
