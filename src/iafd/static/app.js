@@ -42,12 +42,11 @@ function show(...nodes) {
   const heading = main.querySelector("h1");
   const title = heading?.firstChild?.textContent.trim() || "";
   document.title = title ? `${title} — ${APP_NAME}` : APP_NAME;
-  if (title === shownTitle) return;
+  if (title === shownTitle && heading) return;
   shownTitle = title;
-  if (!heading) return;
   // Keyboard and screen reader users land on the new screen instead of the top of the page.
-  heading.tabIndex = -1;
-  (main.querySelector("[autofocus]") || heading).focus({ preventScroll: true });
+  if (heading) heading.tabIndex = -1;
+  (main.querySelector("[data-autofocus]") || heading || main).focus({ preventScroll: true });
 }
 
 // ---------------------------------------------------------------- navigation
@@ -66,7 +65,8 @@ let screenNumber = 0;
 function setRoute(hash) {
   screenNumber += 1;
   if (location.hash === hash) return;
-  if (replaceRoute) history.replaceState(null, "", hash);
+  // A form that is left cannot be reopened: its entry is replaced, so that Back skips it.
+  if (replaceRoute || location.hash === WORK) history.replaceState(null, "", hash);
   else history.pushState(null, "", hash);
 }
 
@@ -542,14 +542,17 @@ function advancedFacts(advanced) {
 async function showApp(appId) {
   setRoute(`#/apps/${encodeURIComponent(appId)}`);
   drawNav("apps");
+  const mine = screenNumber;
   show(h("p", { class: "muted" }, t("apps.loading")));
   let detail;
   try {
     detail = await api("GET", `/api/apps/${appId}`);
   } catch (error) {
-    show(errorBox(error), button(t("action.back"), showApps, "ghost"));
+    // Another screen was opened meanwhile (the sign-in screen included): leave it alone.
+    if (mine === screenNumber) show(errorBox(error), button(t("action.back"), showApps, "ghost"));
     return;
   }
+  if (mine !== screenNumber) return;
   const { app } = detail;
   const stageClass = detail.stage === "production" ? "ok" : detail.stage === "pilot" ? "pilot" : "";
   const message = h("div", {});
@@ -671,7 +674,8 @@ function uninstallPanel(detail, appId) {
 
 function showWizard(appId) {
   setRoute(WORK);
-  const url = h("input", { type: "url", placeholder: "https://…", autofocus: true });
+  // Not the autofocus attribute: the browser keeps such a field in mind and focuses it again later.
+  const url = h("input", { type: "url", placeholder: "https://…", "data-autofocus": "" });
   const file = h("input", { type: "file", accept: ".msi,.exe" });
   const message = h("div", {});
   const start = async (event) => {
@@ -1034,15 +1038,23 @@ function when(value) {
 
 function table(headers, rows) {
   // On a narrow screen each row is shown as a card: every cell then carries the name of its column.
+  // The roles are spelled out because that layout removes what a screen reader knows of a table.
   for (const row of rows) {
+    row.setAttribute("role", "row");
     [...row.children].forEach((cell, index) => {
+      cell.setAttribute("role", "cell");
       if (headers[index]) cell.dataset.label = headers[index];
     });
   }
   return h(
     "div",
     { class: "table-wrap" },
-    h("table", {}, h("thead", {}, h("tr", {}, headers.map((label) => h("th", {}, label)))), h("tbody", {}, rows)),
+    h(
+      "table",
+      { role: "table" },
+      h("thead", { role: "rowgroup" }, h("tr", { role: "row" }, headers.map((label) => h("th", { role: "columnheader" }, label)))),
+      h("tbody", { role: "rowgroup" }, rows),
+    ),
   );
 }
 
@@ -1194,14 +1206,16 @@ function showSoftware(item, query) {
 async function showDevice(deviceId) {
   setRoute(`#/inventory/devices/${encodeURIComponent(deviceId)}`);
   drawNav("inventory");
+  const mine = screenNumber;
   show(h("p", { class: "muted" }, t("apps.loading")));
   let detail;
   try {
     detail = await api("GET", `/api/inventory/devices/${encodeURIComponent(deviceId)}`);
   } catch (error) {
-    show(errorBox(error), button(t("action.back"), () => showInventory("devices"), "ghost"));
+    if (mine === screenNumber) show(errorBox(error), button(t("action.back"), () => showInventory("devices"), "ghost"));
     return;
   }
+  if (mine !== screenNumber) return;
   const { device, apps } = detail;
   show(
     h("div", { class: "head" }, h("h1", {}, device.name), button(t("action.back"), () => showInventory("devices"), "ghost")),
@@ -1623,14 +1637,16 @@ function devicePicker(rule) {
 async function showRemoval(ruleId) {
   setRoute(`#/removals/${encodeURIComponent(ruleId)}`);
   drawNav("removals");
+  const mine = screenNumber;
   show(h("p", { class: "muted" }, t("apps.loading")));
   let detail;
   try {
     detail = await api("GET", `/api/removals/${encodeURIComponent(ruleId)}`);
   } catch (error) {
-    show(errorBox(error), button(t("action.back"), showRemovals, "ghost"));
+    if (mine === screenNumber) show(errorBox(error), button(t("action.back"), showRemovals, "ghost"));
     return;
   }
+  if (mine !== screenNumber) return;
   const { rule, results } = detail;
   const onDemand = rule.mechanism === "remediation";
   const message = h("div", {});
@@ -1717,7 +1733,9 @@ async function start() {
   language.replaceChildren(...Object.entries(config.languages).map(([code, name]) => h("option", { value: code }, name)));
   language.addEventListener("change", async () => {
     await setLanguage(language.value);
-    boot();
+    // A form or a publication in progress is kept as it is (it takes the new language at the
+    // next screen): drawing the list instead would lose what was typed, or the result.
+    if (location.hash !== WORK) boot();
   });
   document.getElementById("logout").addEventListener("click", async () => {
     try {

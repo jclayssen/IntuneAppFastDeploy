@@ -6,6 +6,7 @@
   --muted: #5d6878;
   --line: #d9dee6;
   --line-strong: #aeb7c4;
+  --field-line: #808b9b;
   --hover: #f0f3f7;
   --accent: #0b63ce;
   --accent-hover: #0953ad;
@@ -31,6 +32,7 @@
     --muted: #9aa5b5;
     --line: #2f3845;
     --line-strong: #4b586a;
+    --field-line: #6b788b;
     --hover: #222a35;
     --accent: #5aa2ff;
     --accent-hover: #80b8ff;
@@ -52,6 +54,8 @@
   }
 }
 * { box-sizing: border-box; }
+/* Room for the bar that stays at the bottom of a long form: a field reached with Tab is not hidden under it. */
+html { scroll-padding-bottom: 7rem; }
 /* The rules below set "display" on buttons, labels and rows, which would override the hidden attribute. */
 [hidden] { display: none !important; }
 body {
@@ -116,7 +120,7 @@ input[type="text"], input[type="url"], input[type="search"], select, textarea {
   width: 100%;
   min-height: var(--control);
   padding: 7px 10px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--field-line);
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
@@ -124,9 +128,9 @@ input[type="text"], input[type="url"], input[type="search"], select, textarea {
   transition: border-color var(--fast) ease-out;
 }
 input[type="text"]:hover, input[type="url"]:hover, input[type="search"]:hover, select:hover, textarea:hover {
-  border-color: var(--line-strong);
+  border-color: var(--muted);
 }
-input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.85; }
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 input[type="file"] { max-width: 100%; font: inherit; color: var(--muted); }
 input[type="file"]::file-selector-button {
   min-height: var(--control-sm);
@@ -334,10 +338,16 @@ ol.stepper li.done::before { content: "\2713"; border-color: var(--ok); color: v
   z-index: 5;
   margin: 0 -16px;
   padding: 12px 16px;
+  max-height: 45vh;
+  overflow-y: auto;
   background: var(--bg);
   border-top: 1px solid var(--line);
 }
-.actions-bar > .notice:last-of-type { margin-bottom: 10px; }
+.actions-bar .notice { margin-bottom: 10px; }
+/* Too little height to give some of it away (a phone held sideways): the actions end the form instead. */
+@media (max-height: 420px) {
+  .actions-bar { position: static; max-height: none; }
+}
 .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 16px; }
 .empty { text-align: center; padding: 30px 10px; }
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
@@ -383,14 +393,15 @@ button.tab.current {
   .head > button, .head > a.btn { flex: 1 1 auto; }
   /* A table becomes a list of cards: each cell says which column it comes from. */
   .table-wrap { overflow-x: visible; }
-  table, tbody, tr, td { display: block; width: 100%; }
+  table, tbody, tr { display: block; width: 100%; }
   thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   tbody tr { padding: 10px 0; border-bottom: 1px solid var(--line); }
   tbody tr:first-child { padding-top: 0; }
   tbody tr:last-child { border-bottom: none; padding-bottom: 0; }
   tbody tr:hover { background: transparent; }
-  td { position: relative; padding: 3px 0 3px 36%; border-bottom: none; overflow-wrap: anywhere; }
-  td[data-label]::before { content: attr(data-label); position: absolute; left: 0; width: 34%; font-size: 13px; color: var(--muted); padding-top: 1px; }
+  td { display: flow-root; padding: 3px 0 3px 36%; border-bottom: none; overflow-wrap: anywhere; }
+  /* 36% of the row is 56.25% of what is left for the content, and 34% of it is 53.125%. */
+  td[data-label]::before { content: attr(data-label); float: left; width: 53.125%; margin-left: -56.25%; font-size: 13px; color: var(--muted); padding-top: 1px; }
   td:not([data-label]) { padding-left: 0; }
   td:empty { display: none; }
   .badge { white-space: normal; }
@@ -399,6 +410,10 @@ button.tab.current {
   dl.facts dt { padding-top: 8px; }
   dl.facts dt:first-child { padding-top: 0; }
   .actions-bar .row.end > * { flex: 1 1 auto; }
+}
+/* After the rules that make the header compact: on a touch screen its controls keep a full target. */
+@media (pointer: coarse) {
+  button.tab, .topbar button.tab, .topbar #logout, .topbar select { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before { transition-duration: 0.01ms !important; }
