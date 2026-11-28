@@ -134,7 +134,13 @@ Cela déclare à Microsoft que l'outil existe dans *votre* tenant. Comptez cinq 
 
 Aucun secret client n'est nécessaire : l'inscription est un *client public* et chacun se connecte avec son propre compte.
 
-**Facultatif — chercher les groupes par leur nom.** Par défaut, vous collez l'Object ID d'un groupe. Pour chercher les groupes par nom, ajoutez aussi l'autorisation déléguée `GroupMember.Read.All`, accordez à nouveau le consentement administrateur, et mettez `ENABLE_GROUP_PICKER: "true"` dans `docker-compose.yml`.
+**Facultatif — chercher les groupes par leur nom.** Par défaut, vous collez l'Object ID d'un groupe. L'outil sait aussi chercher vos groupes par leur nom. Partout où l'on choisit un groupe, l'interface indique que cette recherche existe et donne les mêmes étapes sous **Comment activer la recherche par nom**. Suivez-les dans cet ordre : une autorisation qui n'a pas reçu le consentement fait échouer la connexion.
+
+1. Dans l'inscription d'application : **API autorisées → Ajouter une autorisation → Microsoft Graph → Autorisations déléguées**, cherchez `GroupMember.Read.All`, cochez-la et cliquez sur **Ajouter des autorisations**.
+2. Cliquez de nouveau sur **Accorder un consentement d'administrateur pour \<votre organisation\>**. La colonne d'état doit afficher une coche verte en face de `GroupMember.Read.All`.
+3. Ensuite seulement, mettez `ENABLE_GROUP_PICKER: "true"` dans `docker-compose.yml` (étape 2) et lancez `docker compose up -d`. Chacun se reconnecte.
+
+Pour revenir en arrière, remettez `"false"` et relancez `docker compose up -d`. `GroupMember.Read.All` est en lecture seule (les groupes et leurs membres) et l'outil ne s'en sert que pour cette recherche.
 
 ## Étape 2 — Installer sur votre PC
 
@@ -261,16 +267,33 @@ Laissés au portail Intune, parce que chacun demande un écran à lui seul : les
 
 Ouvrez une application (cliquez sur son nom) pour configurer, application par application :
 
-- **Pilote** : les groupes qui reçoivent une nouvelle version en premier.
-- **Production** : les groupes ajoutés quand vous cliquez sur **Passer en production**. Si vous laissez vide, les affectations de la version précédente sont reprises.
+- **Pilote** : les groupes qui reçoivent une nouvelle version en premier, pour l'essayer. Utilisés quand vous publiez avec *Les groupes pilotes d'abord*.
+- **Production** : les groupes qui la reçoivent ensuite : ajoutés quand vous cliquez sur **Passer en production**, ou tout de suite si vous publiez avec *La production directement*. Si vous laissez vide, les affectations de la version précédente sont reprises.
 
-Pour chacun, vous choisissez *Obligatoire* ou *Disponible*, et vous ajoutez des groupes :
+Pour chacun, vous choisissez comment Intune installe l'application :
 
-- **Tous les appareils** / **Tous les utilisateurs** : un clic.
-- **Un groupe** : collez son **Object ID**. Vous le trouvez dans le centre d'administration Entra, sous **Groupes → \<le groupe\> → Vue d'ensemble → ID d'objet**. Le libellé n'est qu'un aide-mémoire pour vous.
-- Avec `ENABLE_GROUP_PICKER: "true"` (voir étape 1), une zone de recherche trouve les groupes par leur nom.
+- *Obligatoire* : Intune l'installe de lui-même sur les postes des cibles.
+- *Disponible* : elle est proposée dans le Portail d'entreprise et chacun l'installe s'il le souhaite. Intune ne propose une application qu'à des groupes d'utilisateurs.
 
-Au moment de publier une nouvelle version, vous choisissez *Les groupes pilotes d'abord*, *La production directement* ou *Personne pour l'instant*. Pendant la phase pilote, la page de l'application affiche le badge **Pilote** et le bouton **Passer en production**.
+Puis vous ajoutez des cibles :
+
+- **Tous les appareils** / **Tous les utilisateurs** : un clic. Chaque appareil inscrit dans Intune, ou chaque utilisateur de votre organisation, sans groupe à créer ni à tenir à jour.
+- **Un groupe** : collez son **Object ID**. Vous le trouvez dans le centre d'administration Entra, sous **Groupes → Tous les groupes → \<le groupe\> → Vue d'ensemble → ID d'objet**. Le libellé n'est qu'un aide-mémoire pour vous : il s'affiche à la place de l'identifiant, reste dans `config/rollout.json` et n'est pas envoyé à Intune.
+- **Rechercher un groupe par son nom** : avec `ENABLE_GROUP_PICKER: "true"` (voir [étape 1](#étape-1--créer-linscription-dapplication-dans-microsoft-entra-id)), une zone de recherche trouve les groupes de Microsoft Entra ID par le début de leur nom, 20 au plus. Tant que l'option est désactivée, le même emplacement indique que la recherche existe et déplie les étapes pour l'activer : personne n'a besoin de quitter l'outil pour le découvrir.
+
+<img src="docs/screenshots/fr/14-group-search-setup.png" alt="Bloc Pilote de la page d'une application : la recherche par nom indiquée comme non activée avec les étapes d'activation dépliées, les champs Object ID et libellé, et les boutons Tous les appareils et Tous les utilisateurs" width="780">
+
+Chaque partie de ces écrans porte une courte explication de ce qu'elle fait. **Enregistrer les groupes** ne fait que garder les réglages sur le serveur : rien ne change dans Intune avant la prochaine publication ou **Passer en production**. Ce qu'Intune applique aujourd'hui est à la ligne **Affectations** de la page de l'application.
+
+Au moment de publier une nouvelle version, vous choisissez qui la reçoit :
+
+| Choix | Qui reçoit la nouvelle version |
+|---|---|
+| *Les groupes pilotes d'abord* | Seulement les groupes pilotes. **Passer en production**, sur la page de l'application, ajoute ensuite les groupes de production. |
+| *La production directement* | Les groupes pilotes et les groupes de production, dès la publication. Sans groupe de production configuré, les affectations de la version précédente sont reprises. |
+| *Personne pour l'instant* | Personne : l'application est créée dans Intune sans affectation, jusqu'à ce que vous l'affectiez dans le portail Intune. |
+
+Pendant la phase pilote, la page de l'application affiche le badge **Pilote** et le bouton **Passer en production**.
 
 ### Notifications aux utilisateurs
 
@@ -391,7 +414,7 @@ Ces contrôles sont faits par le serveur, pas seulement par l'interface.
 
 ### Désinstaller une application installée par Intune
 
-Sur la page d'une application Intune, **Désinstaller des postes** affecte cette application avec l'intention Désinstaller aux cibles choisies ; Intune utilise alors la commande de désinstallation de l'application elle-même. **Arrêter la désinstallation** la retire.
+Sur la page d'une application Intune, **Désinstaller des postes** affecte cette application avec l'intention Désinstaller aux cibles choisies ; Intune utilise alors la commande de désinstallation de l'application elle-même. **Arrêter la désinstallation** la retire : plus aucun poste n'est visé, et l'application n'est pas remise là où elle a été retirée.
 
 ### À savoir
 
@@ -587,6 +610,8 @@ uv run python -m tests.demo
 ```
 
 Elle écoute sur le port 8080. Quand ce port est pris (par l'outil lui-même, par exemple), donnez-en un autre avec `PORT` et indiquez l'adresse au script des captures : `PORT=8090 uv run python -m tests.demo`, puis `node docs/screenshots/make.js fr http://localhost:8090`.
+
+La démo démarre avec la recherche des groupes par nom désactivée, comme une installation neuve. Pour la voir activée, avec quelques groupes simulés à trouver : `GROUP_PICKER=true uv run python -m tests.demo`.
 
 Organisation :
 

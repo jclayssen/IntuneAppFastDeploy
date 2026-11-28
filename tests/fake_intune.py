@@ -37,6 +37,7 @@ class FakeIntune:
         self.health_runs: dict[str, dict[str, dict | None]] = {}
         self.remediations_unlicensed = False
         self.groups: dict[str, dict] = {}  # group id -> {name, members: set of object ids}
+        self.directory: dict[str, str] = {}  # groups of the tenant found by the search: id -> name
         self.unregistered: set[str] = set()  # device ids without an Entra object
         self._ids = itertools.count(1)
 
@@ -213,6 +214,23 @@ class FakeIntune:
                 and device_id not in self.unregistered
             ]
             return httpx.Response(200, json={"value": found})
+        if path == "/groups" and method == "GET":
+            # The only search the tool does: by the start of the name, 20 results, sorted.
+            wanted = re.fullmatch(
+                r"startswith\(displayName,'(.*)'\)",
+                request.url.params.get("$filter", "startswith(displayName,'')"),
+            )
+            assert wanted, "groups are only searched by the start of their name"
+            start = wanted.group(1).replace("''", "'").casefold()
+            found = sorted(
+                (
+                    {"id": group_id, "displayName": name}
+                    for group_id, name in self.directory.items()
+                    if name.casefold().startswith(start)
+                ),
+                key=lambda group: group["displayName"].casefold(),
+            )
+            return httpx.Response(200, json={"value": found[: int(request.url.params["$top"])]})
         if path == "/groups" and method == "POST":
             assert body["securityEnabled"] is True and body["mailEnabled"] is False
             assert re.fullmatch(r"[A-Za-z0-9-]{1,64}", body["mailNickname"])
