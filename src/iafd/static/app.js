@@ -31,9 +31,69 @@ function h(tag, attrs = {}, ...children) {
   return node;
 }
 
+const APP_NAME = "IntuneAppFastDeploy";
+// The title of the screen last shown: the focus only moves when the screen changes,
+// not when the same screen is drawn again (a progress screen is redrawn every second).
+let shownTitle = null;
+
 function show(...nodes) {
   main.replaceChildren(...nodes.flat().filter(Boolean));
   window.scrollTo(0, 0);
+  const heading = main.querySelector("h1");
+  const title = heading?.firstChild?.textContent.trim() || "";
+  document.title = title ? `${title} — ${APP_NAME}` : APP_NAME;
+  if (title === shownTitle) return;
+  shownTitle = title;
+  if (!heading) return;
+  // Keyboard and screen reader users land on the new screen instead of the top of the page.
+  heading.tabIndex = -1;
+  (main.querySelector("[autofocus]") || heading).focus({ preventScroll: true });
+}
+
+// ---------------------------------------------------------------- navigation
+
+// Each screen that can be found again has an address ("#/apps/<id>"), so that the Back
+// button of the browser, a reload and a bookmark all work. Forms in progress share
+// "#/work": they cannot be rebuilt from an address, going back to one opens the list.
+const WORK = "#/work";
+// Same shape as the server accepts (inventory.safe_id), minus "." and ".." which a URL would resolve.
+const SAFE_ID = /^(?!\.+$)[A-Za-z0-9_.-]{1,128}$/;
+let replaceRoute = false;
+// Counts the screens opened. A background loop remembers the number it started under and
+// stops once it has changed, instead of drawing over the screen the person moved to.
+let screenNumber = 0;
+
+function setRoute(hash) {
+  screenNumber += 1;
+  if (location.hash === hash) return;
+  if (replaceRoute) history.replaceState(null, "", hash);
+  else history.pushState(null, "", hash);
+}
+
+function decodePart(part) {
+  try {
+    return decodeURIComponent(part || "");
+  } catch {
+    return "";
+  }
+}
+
+// Draws the screen the address names. The address comes from outside: only known shapes are followed.
+function openRoute() {
+  // Missing parts are empty strings: a regular expression would read undefined as the word "undefined".
+  const [, area = "", first = "", second = ""] = location.hash.split("/").map(decodePart);
+  replaceRoute = true;
+  try {
+    if (area === "apps" && SAFE_ID.test(first)) return showApp(first);
+    if (area === "inventory" && config.device_inventory) {
+      if (first === "devices" && SAFE_ID.test(second)) return showDevice(second);
+      return showInventory(first === "devices" ? "devices" : "software");
+    }
+    if (area === "removals" && config.device_inventory) return SAFE_ID.test(first) ? showRemoval(first) : showRemovals();
+    return showApps();
+  } finally {
+    replaceRoute = false;
+  }
 }
 
 class ApiError extends Error {
@@ -120,12 +180,30 @@ function button(label, onclick, cls = "") {
 }
 
 async function busy(node, action) {
-  if (node) node.disabled = true;
+  if (node) {
+    node.disabled = true;
+    node.setAttribute("aria-busy", "true");
+  }
   try {
     return await action();
   } finally {
-    if (node) node.disabled = false;
+    if (node) {
+      node.disabled = false;
+      node.removeAttribute("aria-busy");
+    }
   }
+}
+
+// Where the person is in the three stages of a publication: 1 installer, 2 review, 3 publication.
+function stepper(current) {
+  const labels = [t("wizard.step_file"), t("wizard.step_review"), t("wizard.step_publish")];
+  return h(
+    "ol",
+    { class: "stepper" },
+    labels.map((label, index) =>
+      h("li", { class: index + 1 === current ? "current" : index + 1 < current ? "done" : "", "aria-current": index + 1 === current ? "step" : null }, label),
+    ),
+  );
 }
 
 // ---------------------------------------------------------------- language
@@ -145,6 +223,7 @@ async function setLanguage(code) {
     /* storage unavailable */
   }
   document.getElementById("language").value = code;
+  document.getElementById("skip").textContent = t("nav.skip");
   document.getElementById("logout").textContent = t("action.sign_out");
   document.getElementById("test-version").textContent = t("footer.test_version");
   document.getElementById("test-version").title = t("footer.test_version_hint");
@@ -165,6 +244,7 @@ function preferredLanguage() {
 // ---------------------------------------------------------------- sign-in
 
 function showLogin(reason) {
+  screenNumber += 1;
   document.getElementById("nav").replaceChildren();
   document.getElementById("logout").hidden = true;
   document.getElementById("user").textContent = "";
@@ -212,9 +292,10 @@ function drawNav(current) {
 }
 
 async function showApps() {
+  setRoute("#/apps");
   drawNav("apps");
   const list = h("div", { class: "panel" }, h("p", { class: "muted" }, t("apps.loading")));
-  const search = h("input", { type: "search", placeholder: t("apps.search"), class: "grow" });
+  const search = h("input", { type: "search", placeholder: t("apps.search"), "aria-label": t("apps.search"), class: "grow" });
   show(
     h(
       "div",
@@ -241,32 +322,22 @@ async function showApps() {
       return;
     }
     list.replaceChildren(
-      h(
-        "div",
-        { class: "table-wrap" },
-        h(
-          "table",
-          {},
-          h("thead", {}, h("tr", {}, [t("apps.name"), t("apps.version"), t("apps.publisher"), t("apps.status"), ""].map((x) => h("th", {}, x)))),
+      table(
+        [t("apps.name"), t("apps.version"), t("apps.publisher"), t("apps.status"), ""],
+        rows.map((app) =>
           h(
-            "tbody",
+            "tr",
             {},
-            rows.map((app) =>
-              h(
-                "tr",
-                {},
-                h("td", {}, button(app.name, () => showApp(app.id), "linkish")),
-                h("td", {}, app.version || "—"),
-                h("td", {}, app.publisher),
-                h(
-                  "td",
-                  {},
-                  h("span", { class: `badge ${app.assigned ? "ok" : ""}` }, t(app.assigned ? "apps.assigned" : "apps.unassigned")),
-                  app.superseded_count ? [" ", h("span", { class: "badge" }, t("apps.superseded"))] : null,
-                ),
-                h("td", { class: "actions" }, button(t("action.update"), () => showWizard(app.id), "small")),
-              ),
+            h("td", {}, button(app.name, () => showApp(app.id), "linkish")),
+            h("td", {}, app.version || "—"),
+            h("td", {}, app.publisher),
+            h(
+              "td",
+              {},
+              h("span", { class: `badge ${app.assigned ? "ok" : ""}` }, t(app.assigned ? "apps.assigned" : "apps.unassigned")),
+              app.superseded_count ? [" ", h("span", { class: "badge" }, t("apps.superseded"))] : null,
             ),
+            h("td", { class: "actions" }, button(t("action.update"), () => showWizard(app.id), "small")),
           ),
         ),
       ),
@@ -469,6 +540,8 @@ function advancedFacts(advanced) {
 // ---------------------------------------------------------------- app detail
 
 async function showApp(appId) {
+  setRoute(`#/apps/${encodeURIComponent(appId)}`);
+  drawNav("apps");
   show(h("p", { class: "muted" }, t("apps.loading")));
   let detail;
   try {
@@ -597,11 +670,13 @@ function uninstallPanel(detail, appId) {
 // ---------------------------------------------------------------- wizard
 
 function showWizard(appId) {
+  setRoute(WORK);
   const url = h("input", { type: "url", placeholder: "https://…", autofocus: true });
   const file = h("input", { type: "file", accept: ".msi,.exe" });
   const message = h("div", {});
   const start = async (event) => {
     message.replaceChildren();
+    const mine = screenNumber;
     try {
       const job = await busy(event.target, () => {
         if (file.files.length) {
@@ -612,13 +687,14 @@ function showWizard(appId) {
         }
         return api("POST", "/api/analyze", { url: url.value, app_id: appId });
       });
-      followJob(job.id, appId);
+      if (mine === screenNumber) followJob(job.id, appId);
     } catch (error) {
       message.replaceChildren(errorBox(error));
     }
   };
   show(
     h("div", { class: "head" }, h("h1", {}, t(appId ? "wizard.update_title" : "wizard.new_title")), button(t("action.cancel"), appId ? () => showApp(appId) : showApps, "ghost")),
+    stepper(1),
     h(
       "div",
       { class: "panel" },
@@ -641,23 +717,26 @@ function progressPanel(job) {
   );
 }
 
-async function followJob(jobId, appId) {
+async function followJob(jobId, appId, step = 1) {
   const title = h("div", { class: "head" }, h("h1", {}, t("wizard.progress_title")));
+  const mine = screenNumber;
   for (;;) {
     let job;
     try {
       job = await api("GET", `/api/jobs/${jobId}`);
     } catch (error) {
-      if (error.code !== "error.sign_in_required") show(errorBox(error), button(t("action.back"), showApps, "ghost"));
+      if (mine === screenNumber && error.code !== "error.sign_in_required") show(errorBox(error), button(t("action.back"), showApps, "ghost"));
       return;
     }
+    // The person went to another screen: stop here instead of pulling them back.
+    if (mine !== screenNumber) return;
     if (job.state === "ready") return showReview(job, appId);
     if (job.state === "done") return showDone(job);
     if (job.state === "error") {
       show(title, errorBox(job.error), button(t("action.back"), () => showWizard(appId), "ghost"));
       return;
     }
-    show(title, progressPanel(job));
+    show(title, stepper(step), progressPanel(job));
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 }
@@ -728,7 +807,7 @@ function replaceEditor(seed, version) {
   const enabled = h("input", { type: "checkbox", checked: !!seed });
   const chips = h("div", { class: "chips" });
   const found = h("div", { class: "results" });
-  const search = h("input", { type: "search", placeholder: t("removal.add_name") });
+  const search = h("input", { type: "search", placeholder: t("removal.add_name"), "aria-label": t("removal.add_name") });
   const below = input(version || "", { placeholder: "24.0" });
   const mode = select([["upgrade", t("replace.upgrade")], ["reinstall", t("replace.reinstall")]], "upgrade");
   const modeHint = h("p", { class: "hint" });
@@ -863,9 +942,10 @@ function showReview(job, appId) {
       message.replaceChildren(h("div", { class: "notice error" }, t("error.no_pilot_groups")));
       return;
     }
+    const mine = screenNumber;
     try {
       await busy(event.target, () => api("POST", `/api/jobs/${job.id}/publish`, body));
-      followJob(job.id, appId);
+      if (mine === screenNumber) followJob(job.id, appId, 3);
     } catch (error) {
       message.replaceChildren(errorBox(error));
     }
@@ -882,6 +962,7 @@ function showReview(job, appId) {
 
   show(
     h("div", { class: "head" }, h("h1", {}, t("review.title")), button(t("action.cancel"), cancel, "ghost")),
+    stepper(2),
     job.error ? errorBox(job.error) : null,
     h(
       "div",
@@ -913,12 +994,17 @@ function showReview(job, appId) {
     options,
     replace ? replace.node : null,
     advanced.node,
-    message,
+    // Stays at the bottom of the window: the form is long, and an error shows next to the button.
     h(
       "div",
-      { class: "row end" },
-      h("a", { class: "btn ghost", href: `/api/jobs/${job.id}/intunewin`, download: "" }, t("action.download_package")),
-      button(t("action.publish"), publish),
+      { class: "actions-bar" },
+      message,
+      h(
+        "div",
+        { class: "row end" },
+        h("a", { class: "btn ghost", href: `/api/jobs/${job.id}/intunewin`, download: "" }, t("action.download_package")),
+        button(t("action.publish"), publish),
+      ),
     ),
   );
 }
@@ -927,6 +1013,7 @@ function showDone(job) {
   const { outcome } = job.result;
   show(
     h("div", { class: "head" }, h("h1", {}, t("done.title"))),
+    stepper(4),
     h("div", { class: "notice ok", role: "status" }, t(`done.${outcome.mode}`, { name: outcome.name })),
     outcome.removed?.length ? h("div", { class: "notice" }, t("done.removed", { names: outcome.removed.map((item) => `${item.name} ${item.version}`).join(", ") })) : null,
     outcome.cleanup_failed?.length
@@ -946,6 +1033,12 @@ function when(value) {
 }
 
 function table(headers, rows) {
+  // On a narrow screen each row is shown as a card: every cell then carries the name of its column.
+  for (const row of rows) {
+    [...row.children].forEach((cell, index) => {
+      if (headers[index]) cell.dataset.label = headers[index];
+    });
+  }
   return h(
     "div",
     { class: "table-wrap" },
@@ -984,9 +1077,11 @@ function deviceHeaders() {
 
 // Software found on the devices (tab "software") or the devices themselves (tab "devices").
 function showInventory(tab = "software", query = "") {
+  setRoute(`#/inventory/${tab === "devices" ? "devices" : "software"}`);
   drawNav("inventory");
   const bySoftware = tab === "software";
-  const search = h("input", { type: "search", class: "grow", value: query, placeholder: t(bySoftware ? "inventory.search_software" : "inventory.search_device") });
+  const searchLabel = t(bySoftware ? "inventory.search_software" : "inventory.search_device");
+  const search = h("input", { type: "search", class: "grow", value: query, placeholder: searchLabel, "aria-label": searchLabel });
   const body = h("div", { class: "panel" }, h("p", { class: "muted" }, t("apps.loading")));
   const note = h("p", { class: "hint" });
   const switcher = (key, label) =>
@@ -1042,6 +1137,7 @@ function showInventory(tab = "software", query = "") {
 
 // One piece of software: its versions, and on request the devices that have each version.
 function showSoftware(item, query) {
+  setRoute(WORK);
   drawNav("inventory");
   const devices = h("div", {});
   const open = async (entry, control) => {
@@ -1096,6 +1192,7 @@ function showSoftware(item, query) {
 
 // One device and everything Intune found on it.
 async function showDevice(deviceId) {
+  setRoute(`#/inventory/devices/${encodeURIComponent(deviceId)}`);
   drawNav("inventory");
   show(h("p", { class: "muted" }, t("apps.loading")));
   let detail;
@@ -1155,14 +1252,17 @@ const COMMAND_PRESETS = [
 // Runs a background task to its end, showing its steps.
 async function followTask(jobId, title, onDone, onBack) {
   const head = h("div", { class: "head" }, h("h1", {}, title));
+  const mine = screenNumber;
   for (;;) {
     let job;
     try {
       job = await api("GET", `/api/jobs/${jobId}`);
     } catch (error) {
-      if (error.code !== "error.sign_in_required") show(errorBox(error), button(t("action.back"), onBack, "ghost"));
+      if (mine === screenNumber && error.code !== "error.sign_in_required") show(errorBox(error), button(t("action.back"), onBack, "ghost"));
       return;
     }
+    // The person went to another screen: stop here instead of pulling them back.
+    if (mine !== screenNumber) return;
     if (job.state === "done") return onDone(job);
     if (job.state === "error") {
       show(head, errorBox(job.error), button(t("action.back"), onBack, "ghost"));
@@ -1180,6 +1280,7 @@ function describeVersions(rule) {
 }
 
 async function showRemovals() {
+  setRoute("#/removals");
   drawNav("removals");
   const body = h("div", { class: "panel" }, h("p", { class: "muted" }, t("apps.loading")));
   show(h("div", { class: "head" }, h("h1", {}, t("removal.title"))), h("p", { class: "muted" }, t("removal.intro")), body);
@@ -1214,6 +1315,7 @@ async function showRemovals() {
 
 // The form used to create a removal rule, or to change what an existing one removes.
 function showRemovalForm(seed, rule = null) {
+  setRoute(WORK);
   drawNav("removals");
   const editing = !!rule;
   const looksLikeStore = /^[A-Za-z0-9]+(\.[A-Za-z0-9]+)+$/.test(seed.names[0]);
@@ -1223,7 +1325,7 @@ function showRemovalForm(seed, rule = null) {
 
   const chips = h("div", { class: "chips" });
   const found = h("div", { class: "results" });
-  const search = h("input", { type: "search", placeholder: t("removal.add_name") });
+  const search = h("input", { type: "search", placeholder: t("removal.add_name"), "aria-label": t("removal.add_name") });
   const kind = select([["machine", t("removal.kind_machine")], ["user", t("removal.kind_user")], ["store", t("removal.kind_store")]], initial.kind);
   const kindHint = h("p", { class: "hint" });
   const versionMode = select([["any", t("removal.versions_any")], ["list", t("removal.versions_list")], ["below", t("removal.versions_below")]], state.versions.mode);
@@ -1383,8 +1485,10 @@ function showRemovalForm(seed, rule = null) {
       body.targets = targets.value().targets;
       body.permanent = duration.value === "permanent";
     }
+    const mine = screenNumber;
     try {
       const job = await busy(publish, () => api(editing ? "PUT" : "POST", editing ? `/api/removals/${rule.id}` : "/api/removals", body));
+      if (mine !== screenNumber) return;
       followTask(
         job.id,
         t("removal.progress"),
@@ -1413,6 +1517,7 @@ function showRemovalForm(seed, rule = null) {
 
 // Removing one program from one device, now, through an Intune remediation script.
 function showOnDemandForm(device, app) {
+  setRoute(WORK);
   drawNav("inventory");
   const looksLikeStore = /^[A-Za-z0-9]+(\.[A-Za-z0-9]+)+$/.test(app.name);
   const versions = select([["this", t("removal.this_version", { version: app.version || "—" })], ["any", t("removal.versions_any")]], app.version ? "this" : "any");
@@ -1516,6 +1621,7 @@ function devicePicker(rule) {
 }
 
 async function showRemoval(ruleId) {
+  setRoute(`#/removals/${encodeURIComponent(ruleId)}`);
   drawNav("removals");
   show(h("p", { class: "muted" }, t("apps.loading")));
   let detail;
@@ -1622,8 +1728,15 @@ async function start() {
   });
   document.getElementById("brand").addEventListener("click", (event) => {
     event.preventDefault();
+    setRoute("#/apps");
     boot();
   });
+  // Not a real address: following it would look like a navigation to an unknown screen.
+  document.getElementById("skip").addEventListener("click", (event) => {
+    event.preventDefault();
+    main.focus();
+  });
+  window.addEventListener("popstate", openRoute);
   await setLanguage(preferredLanguage());
   boot();
 }
@@ -1646,9 +1759,7 @@ async function boot() {
   document.getElementById("user").textContent = me.name;
   document.getElementById("logout").title = `${me.name} (${me.login})`;
   document.getElementById("logout").hidden = false;
-  if (section === "inventory" && config.device_inventory) showInventory("software");
-  else if (section === "removals" && config.device_inventory) showRemovals();
-  else showApps();
+  openRoute();
 }
 
 start();

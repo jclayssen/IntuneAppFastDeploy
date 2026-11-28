@@ -8,6 +8,7 @@
     <link rel="icon" href="data:," />
   </head>
   <body>
+    <a class="skip" href="#main" id="skip"></a>
     <header class="topbar">
       <a class="brand" href="/" id="brand">IntuneAppFastDeploy</a>
       <span class="badge pilot" id="test-version"></span>
@@ -17,7 +18,7 @@
       <select id="language" aria-label="Language"></select>
       <button id="logout" class="ghost" hidden></button>
     </header>
-    <main id="main"></main>
+    <main id="main" tabindex="-1"></main>
     <footer class="muted" id="footer"></footer>
     <script src="app.js" type="module"></script>
   </body>
