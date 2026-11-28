@@ -195,6 +195,8 @@ docker compose down
 
 ## Étape 3 — Utiliser
 
+La liste, une application, l'inventaire, un poste et une désinstallation ont chacun leur adresse : le bouton Précédent du navigateur, un rechargement et un favori ramènent au même écran. Un formulaire en cours (nouvelle application, mise à jour, désinstallation) n'est pas conservé : y revenir ouvre la liste. L'interface suit le thème clair ou sombre du système et s'utilise au clavier comme sur un écran de téléphone.
+
 ### Mettre à jour une application
 
 1. Dans la liste, cliquez sur **Mettre à jour** sur la ligne de l'application.
