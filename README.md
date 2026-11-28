@@ -187,6 +187,8 @@ docker compose down
 
 ## Step 3 — Use it
 
+The list, an application, the inventory, a device and a removal each have their own address: the Back button of the browser, a reload and a bookmark bring you to the same screen. A form in progress (new application, update, removal) is not kept: going back to it opens the list. The interface follows the light or dark theme of the system and works with the keyboard and on a phone-sized screen.
+
 ### Update an application
 
 1. In the list, click **Update** on the application.
