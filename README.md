@@ -116,7 +116,7 @@ These screens come from the built-in demo, which runs against a simulated Intune
 
 This tells Microsoft that the tool exists in *your* tenant. It takes about five minutes and is done once.
 
-1. Open <https://entra.microsoft.com> and go to **Identity → Applications → App registrations → New registration**.
+1. Open <https://entra.microsoft.com> and go to **Entra ID → App registrations → New registration**.
 2. **Name**: `IntuneAppFastDeploy` (any name works).
 3. **Supported account types**: *Accounts in this organizational directory only (single tenant)*.
 4. **Redirect URI**: choose the platform **Public client/native (mobile & desktop)** and enter:
@@ -278,7 +278,7 @@ For each one you choose how Intune installs the application:
 Then you add targets:
 
 - **All devices** / **All users**: one click. Every device enrolled in Intune, or every user of your organization, with no group to create or keep up to date.
-- **A group**: paste its **Object ID**. You find it in the Entra admin center under **Groups → All groups → \<the group\> → Overview → Object ID**. The label is only a reminder for you: it is shown instead of the identifier, stays in `config/rollout.json` and is not sent to Intune.
+- **A group**: paste its **Object ID**. You find it in the Entra admin center under **Entra ID → Groups → All groups → \<the group\> → Overview → Object ID**. The label is only a reminder for you: it is shown instead of the identifier, stays in `config/rollout.json` and is not sent to Intune.
 - **Search a group by name**: with `ENABLE_GROUP_PICKER: "true"` (see [step 1](#step-1--create-the-app-registration-in-microsoft-entra-id)), a search box finds the groups of Microsoft Entra ID by the start of their name, 20 at most. While the option is off, the same place says that the search exists and unfolds the steps to enable it, so nobody has to leave the tool to find out.
 
 <img src="docs/screenshots/en/14-group-search-setup.png" alt="Pilot block of an application page: the search by name marked as not enabled with the steps to enable it unfolded, the Object ID and label fields, and the All devices and All users buttons" width="780">

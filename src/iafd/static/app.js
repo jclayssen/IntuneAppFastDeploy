@@ -502,7 +502,12 @@ function stageEditor(title, hint, stage, options = {}) {
   const intent = select([["required", t("intent.required")], ["available", t("intent.available")]], state.intent, {
     onchange: (event) => { state.intent = event.target.value; },
   });
-  const groupId = input("", { id: `${uid}-id`, placeholder: GROUP_ID_SHAPE, class: "mono ge-id", autocomplete: "off", "aria-describedby": `${uid}-error`, oninput: (event) => event.target.removeAttribute("aria-invalid") });
+  // The refusal is about what was typed: it goes away as soon as that changes.
+  const clearRefusal = (event) => {
+    event.target.removeAttribute("aria-invalid");
+    message.replaceChildren();
+  };
+  const groupId = input("", { id: `${uid}-id`, placeholder: GROUP_ID_SHAPE, class: "mono ge-id", autocomplete: "off", "aria-describedby": `${uid}-error`, oninput: clearRefusal });
   const groupName = input("", { id: `${uid}-name`, placeholder: t("groups.label_placeholder"), class: "ge-name", autocomplete: "off", "aria-describedby": `${uid}-name-help` });
   const addManual = () => {
     const added = add({ type: "group", id: groupId.value.trim(), name: groupName.value.trim() });

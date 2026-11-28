@@ -116,7 +116,7 @@ Ces écrans viennent de la démonstration intégrée, qui tourne face à un Intu
 
 Cela déclare à Microsoft que l'outil existe dans *votre* tenant. Comptez cinq minutes, une seule fois.
 
-1. Ouvrez <https://entra.microsoft.com> puis **Identité → Applications → Inscriptions d'applications → Nouvelle inscription**.
+1. Ouvrez <https://entra.microsoft.com> puis **Entra ID → Inscriptions d'applications → Nouvelle inscription**.
 2. **Nom** : `IntuneAppFastDeploy` (le nom est libre).
 3. **Types de comptes pris en charge** : *Comptes dans cet annuaire d'organisation uniquement (locataire unique)*.
 4. **URI de redirection** : choisissez la plateforme **Client public/natif (mobile et bureau)** et saisissez :
@@ -280,7 +280,7 @@ Pour chacun, vous choisissez comment Intune installe l'application :
 Puis vous ajoutez des cibles :
 
 - **Tous les appareils** / **Tous les utilisateurs** : un clic. Chaque appareil inscrit dans Intune, ou chaque utilisateur de votre organisation, sans groupe à créer ni à tenir à jour.
-- **Un groupe** : collez son **Object ID**. Vous le trouvez dans le centre d'administration Entra, sous **Groupes → Tous les groupes → \<le groupe\> → Vue d'ensemble → ID d'objet**. Le libellé n'est qu'un aide-mémoire pour vous : il s'affiche à la place de l'identifiant, reste dans `config/rollout.json` et n'est pas envoyé à Intune.
+- **Un groupe** : collez son **Object ID**. Vous le trouvez dans le centre d'administration Entra, sous **Entra ID → Groupes → Tous les groupes → \<le groupe\> → Vue d'ensemble → ID d'objet**. Le libellé n'est qu'un aide-mémoire pour vous : il s'affiche à la place de l'identifiant, reste dans `config/rollout.json` et n'est pas envoyé à Intune.
 - **Rechercher un groupe par son nom** : avec `ENABLE_GROUP_PICKER: "true"` (voir [étape 1](#étape-1--créer-linscription-dapplication-dans-microsoft-entra-id)), une zone de recherche trouve les groupes de Microsoft Entra ID par le début de leur nom, 20 au plus. Tant que l'option est désactivée, le même emplacement indique que la recherche existe et déplie les étapes pour l'activer : personne n'a besoin de quitter l'outil pour le découvrir.
 
 <img src="docs/screenshots/fr/14-group-search-setup.png" alt="Bloc Pilote de la page d'une application : la recherche par nom indiquée comme non activée avec les étapes d'activation dépliées, les champs Object ID et libellé, et les boutons Tous les appareils et Tous les utilisateurs" width="780">
