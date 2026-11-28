@@ -2,7 +2,7 @@
 
 A small Docker web tool that publishes and updates Win32 applications (MSI/EXE) in Microsoft Intune from a download link, shows the software found on the devices, and removes or replaces software through Intune. Public repository, MIT. The maintainer works alone on it and writes in French: answer in French, keep code, comments and commit messages in English.
 
-**Status: test version.** Nothing has ever been run against a real Intune tenant or a real Microsoft sign-in. Everything is tested against an in-memory fake (`tests/fake_intune.py`), and the PowerShell scripts on real Windows in CI. Say so plainly whenever a change touches a Graph call; never present such a change as verified.
+**Status: test version.** One first trial was made on a real trial tenant at the end of November 2026: the Microsoft sign-in worked, and one new MSI application (7-Zip) was published without assignment and shows in the Intune portal. Nothing else has been run against a real tenant: assignments, both update methods, EXE installers, the inventory, removals and every optional feature are only tested against an in-memory fake (`tests/fake_intune.py`), and the PowerShell scripts on real Windows in CI. Say so plainly whenever a change touches a Graph call; never present such a change as verified.
 
 ## Commands
 
@@ -60,12 +60,17 @@ The PowerShell tests (`tests/windows/`, Pester) only run on Windows; in CI they 
 
 ## What only a real tenant can settle
 
-Suggested order for the first real trials, each on something unimportant:
+Done in the first trial (end of November 2026, trial tenant):
 
-1. Sign-in, then the application list.
-2. Publishing one application; check the result in the Intune portal. The `.intunewin` download is the fallback if the upload is refused.
+- Sign-in with a real Microsoft account.
+- Publishing one new MSI application without assignment; it shows in the Intune portal. That publication sends the value `1607` for `minimumSupportedWindowsRelease` and creates the content version with an empty body, so Intune accepted both.
+
+Suggested order for the next trials, each on something unimportant:
+
+1. Assigning an application: pilot groups, then **Go to production**.
+2. Updating an application, with each of the two methods (new application that supersedes the current one, then in place), and a new application from an EXE installer.
 3. The device inventory alone: are the names what the registry of the devices shows?
 4. One removal on one or two devices: how Intune handles an Uninstall assignment with a script detection rule, and whether `deviceStatuses` still answers (the interface falls back to a link to the portal).
 5. The on-demand removal and the device groups, which need more permissions.
 
-Known open points: the value `1607` for `minimumSupportedWindowsRelease` on new applications; creating a content version with an empty body; the portal URL built for a removal rule.
+Known open point: the portal URL built for a removal rule.
