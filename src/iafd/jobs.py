@@ -64,7 +64,9 @@ def describe_error(exc: Exception) -> dict:
         return {"code": exc.code, "detail": exc.detail}
     if isinstance(exc, RemovalError):
         return {"code": str(exc), "detail": exc.detail}
-    if isinstance(exc, FormError | StoreError):
+    if isinstance(exc, FormError):
+        return {"code": str(exc), "detail": exc.detail}
+    if isinstance(exc, StoreError):
         return {"code": str(exc), "detail": ""}
     if isinstance(exc, MsiError):
         return {"code": "error.bad_msi", "detail": str(exc)}

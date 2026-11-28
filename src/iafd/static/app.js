@@ -382,6 +382,90 @@ function notifySelect(value) {
   return select(Object.entries(NOTIFY_KEYS).map(([key, label]) => [key, t(label)]), value in NOTIFY_KEYS ? value : "showAll");
 }
 
+// ---------------------------------------------------------------- advanced settings
+
+const RESTART_KEYS = {
+  basedOnReturnCode: "advanced.restart_return_code",
+  allow: "advanced.restart_allow",
+  suppress: "advanced.restart_suppress",
+  force: "advanced.restart_force",
+};
+// The numeric fields: key in the form and label (which gives the unit).
+const ADVANCED_NUMBERS = [
+  ["disk_space_mb", "advanced.disk_space"],
+  ["memory_mb", "advanced.memory"],
+  ["processors", "advanced.processors"],
+  ["cpu_speed_mhz", "advanced.cpu_speed"],
+  ["max_run_time", "advanced.max_run_time"],
+];
+
+// "1607" -> "Windows 10 1607", "Windows11_23H2" -> "Windows 11 23H2". Intune writes 20H2 as "2H20".
+function windowsLabel(value) {
+  if (value === "2H20") return "Windows 10 20H2";
+  const named = /^Windows(\d+)_(.+)$/.exec(value);
+  if (named) return `Windows ${named[1]} ${named[2]}`;
+  return /^\d{4}$|^\d\dH\d$/.test(value) ? `Windows 10 ${value}` : value;
+}
+
+// Collapsed block of the review screen. Filled with the defaults of the tool for a new
+// application, with what Intune holds for an update: what is left alone is not sent.
+function advancedEditor(advanced, isUpdate) {
+  const numbers = {};
+  for (const [key] of ADVANCED_NUMBERS) {
+    numbers[key] = input(advanced[key] ?? "", { inputMode: "numeric", autocomplete: "off", placeholder: key === "max_run_time" ? "60" : "" });
+  }
+  const releases = (config.windows_releases || []).map((value) => [value, windowsLabel(value)]);
+  if (advanced.windows_release && !releases.some(([value]) => value === advanced.windows_release)) {
+    releases.push([advanced.windows_release, windowsLabel(advanced.windows_release)]);
+  }
+  if (!advanced.windows_release) releases.unshift(["", t("advanced.windows_unset")]);
+  const windows = select(releases, advanced.windows_release || "");
+  const restart = select(Object.entries(RESTART_KEYS).map(([key, label]) => [key, t(label)]), advanced.restart_behavior);
+  const allowUninstall = h("input", { type: "checkbox", checked: !!advanced.allow_uninstall });
+  const body = h(
+    "div",
+    { id: "advanced-settings", hidden: true },
+    h("h3", { class: "sub" }, t("advanced.requirements")),
+    h("p", { class: "hint" }, t("advanced.requirements_hint")),
+    h("div", { class: "two" }, h("div", {}, field(t("advanced.disk_space"), numbers.disk_space_mb)), h("div", {}, field(t("advanced.memory"), numbers.memory_mb))),
+    h("div", { class: "two" }, h("div", {}, field(t("advanced.processors"), numbers.processors)), h("div", {}, field(t("advanced.cpu_speed"), numbers.cpu_speed_mhz))),
+    field(t("advanced.windows"), windows),
+    h("h3", { class: "sub" }, t("advanced.install")),
+    field(t("advanced.restart"), restart, t("advanced.restart_hint")),
+    field(t("advanced.max_run_time"), numbers.max_run_time, t("advanced.max_run_time_hint")),
+    h("label", { class: "check" }, allowUninstall, h("span", {}, t("advanced.allow_uninstall"))),
+  );
+  const toggle = h("button", { type: "button", class: "ghost", "aria-expanded": "false", "aria-controls": "advanced-settings" }, t("advanced.show"));
+  toggle.addEventListener("click", () => {
+    body.hidden = !body.hidden;
+    toggle.setAttribute("aria-expanded", String(!body.hidden));
+    toggle.textContent = t(body.hidden ? "advanced.show" : "advanced.hide");
+  });
+  return {
+    node: h("div", { class: "panel" }, h("h2", {}, t("advanced.title")), h("p", { class: "muted" }, t(isUpdate ? "advanced.intro_update" : "advanced.intro_new")), toggle, body),
+    // The label of the first numeric field that is not a whole number above zero, if any.
+    invalid: () => {
+      const bad = ADVANCED_NUMBERS.find(([key]) => !/^(\d{0,9}[1-9]\d{0,9})?$/.test(numbers[key].value.trim()) || numbers[key].value.trim().length > 10);
+      if (bad && body.hidden) toggle.click();
+      return bad ? t(bad[1]) : null;
+    },
+    value: () => ({
+      ...Object.fromEntries(ADVANCED_NUMBERS.map(([key]) => [key, numbers[key].value.trim()])),
+      windows_release: windows.value,
+      restart_behavior: restart.value,
+      allow_uninstall: allowUninstall.checked,
+    }),
+  };
+}
+
+// The same settings, read-only, on the application page.
+function advancedFacts(advanced) {
+  const rows = ADVANCED_NUMBERS.map(([key, label]) => [t(label), advanced[key] ? String(advanced[key]) : "—"]);
+  rows.splice(4, 0, [t("advanced.windows"), advanced.windows_release ? windowsLabel(advanced.windows_release) : "—"], [t("advanced.restart"), t(RESTART_KEYS[advanced.restart_behavior] || "advanced.restart_return_code")]);
+  rows.push([t("advanced.allow_uninstall"), t(advanced.allow_uninstall ? "advanced.yes" : "advanced.no")]);
+  return h("details", { class: "more" }, h("summary", { class: "muted" }, t("advanced.title")), h("dl", { class: "facts" }, rows.flatMap(([label, value]) => [h("dt", {}, label), h("dd", {}, value)])));
+}
+
 // ---------------------------------------------------------------- app detail
 
 async function showApp(appId) {
@@ -434,6 +518,7 @@ async function showApp(appId) {
         h("dt", {}, t("app.assignments")),
         h("dd", {}, detail.assignments.length ? h("ul", {}, detail.assignments.map((item) => h("li", {}, assignmentText(item)))) : t("app.none")),
       ),
+      advancedFacts(app.advanced),
     ),
     h(
       "div",
@@ -710,6 +795,7 @@ function showReview(job, appId) {
     uninstall_command: input(form.uninstall_command, { class: "mono" }),
   };
   const detection = detectionEditor(form.detection, analysis, isUpdate);
+  const advanced = advancedEditor(form.advanced, isUpdate);
   const message = h("div", {});
   const hasPilot = rollout.pilot.targets.length > 0;
   let extra = {};
@@ -765,9 +851,14 @@ function showReview(job, appId) {
 
   const publish = async (event) => {
     message.replaceChildren();
-    const body = { ...extra(), detection: detection.value() };
+    const body = { ...extra(), detection: detection.value(), advanced: advanced.value() };
     for (const [key, control] of Object.entries(controls)) body[key] = control.value;
     if (replace) body.replace = replace.value();
+    const badNumber = advanced.invalid();
+    if (badNumber) {
+      message.replaceChildren(h("div", { class: "notice error", role: "alert" }, `${t("error.advanced_number")} — ${badNumber}`));
+      return;
+    }
     if (body.rollout === "pilot" && !isUpdate && !body.pilot.targets.length) {
       message.replaceChildren(h("div", { class: "notice error" }, t("error.no_pilot_groups")));
       return;
@@ -821,6 +912,7 @@ function showReview(job, appId) {
     h("div", { class: "panel" }, h("h2", {}, t("detection.title")), h("p", { class: "muted" }, t("detection.text")), detection.node),
     options,
     replace ? replace.node : null,
+    advanced.node,
     message,
     h(
       "div",

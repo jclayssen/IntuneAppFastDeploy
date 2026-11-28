@@ -381,3 +381,243 @@ def test_store_keeps_the_notification_setting(tmp_path):
     with pytest.raises(StoreError, match="error.bad_notifications"):
         store.set("app-2", "App", None, None, "silent")
     assert store.get("app-2")["notifications"] == "showReboot"
+
+
+# --------------------------------------------------------------------------- advanced settings
+
+ADVANCED_DEFAULTS = {
+    "disk_space_mb": None,
+    "memory_mb": None,
+    "processors": None,
+    "cpu_speed_mhz": None,
+    "windows_release": "1607",
+    "restart_behavior": "basedOnReturnCode",
+    "max_run_time": None,
+    "allow_uninstall": False,
+}
+ADVANCED_PROPERTIES = (
+    "minimumFreeDiskSpaceInMB",
+    "minimumMemoryInMB",
+    "minimumNumberOfProcessors",
+    "minimumCpuSpeedInMHz",
+    "allowAvailableUninstall",
+)
+
+
+def tuned_app(**extra):
+    """An existing app on which someone set every advanced setting."""
+    return updatable_app(
+        minimumFreeDiskSpaceInMB=500,
+        minimumMemoryInMB=4096,
+        minimumNumberOfProcessors=2,
+        minimumCpuSpeedInMHz=1800,
+        minimumSupportedWindowsRelease="21H1",
+        allowAvailableUninstall=True,
+        installExperience={
+            "runAsAccount": "user",
+            "deviceRestartBehavior": "suppress",
+            "maxRunTimeInMinutes": 90,
+        },
+        **extra,
+    )
+
+
+def test_new_app_form_proposes_the_defaults_of_the_tool():
+    assert appmodel.propose_form(exe_analysis(), None)["advanced"] == ADVANCED_DEFAULTS
+
+
+def test_new_app_is_unchanged_when_the_advanced_section_is_left_alone():
+    form = new_exe_form()
+    assert form["advanced"] == ADVANCED_DEFAULTS
+    untouched = appmodel.new_app_body(form, exe_analysis())
+    without = appmodel.new_app_body(
+        {key: value for key, value in form.items() if key != "advanced"}, exe_analysis()
+    )
+    assert untouched == without
+    assert untouched["minimumSupportedWindowsRelease"] == "1607"
+    assert untouched["installExperience"] == {
+        "runAsAccount": "system",
+        "deviceRestartBehavior": "basedOnReturnCode",
+    }
+    for prop in ADVANCED_PROPERTIES:
+        assert prop not in untouched, prop
+
+
+def test_new_app_carries_the_advanced_settings():
+    form = new_exe_form(
+        advanced={
+            "disk_space_mb": "500",  # as typed in a text field
+            "memory_mb": 4096,
+            "processors": 2,
+            "cpu_speed_mhz": " 1800 ",
+            "windows_release": "Windows11_23H2",
+            "restart_behavior": "suppress",
+            "max_run_time": 120,
+            "allow_uninstall": True,
+        }
+    )
+    body = appmodel.new_app_body(form, exe_analysis())
+    assert body["minimumFreeDiskSpaceInMB"] == 500
+    assert body["minimumMemoryInMB"] == 4096
+    assert body["minimumNumberOfProcessors"] == 2
+    assert body["minimumCpuSpeedInMHz"] == 1800
+    assert body["minimumSupportedWindowsRelease"] == "Windows11_23H2"
+    assert body["allowAvailableUninstall"] is True
+    assert body["installExperience"] == {
+        "runAsAccount": "system",
+        "deviceRestartBehavior": "suppress",
+        "maxRunTimeInMinutes": 120,
+    }
+
+
+def test_only_the_filled_advanced_fields_are_sent():
+    form = new_exe_form(advanced={"memory_mb": "2048", "disk_space_mb": ""})
+    body = appmodel.new_app_body(form, exe_analysis())
+    assert body["minimumMemoryInMB"] == 2048
+    assert "minimumFreeDiskSpaceInMB" not in body
+    assert body["minimumSupportedWindowsRelease"] == "1607"
+
+
+@pytest.mark.parametrize(
+    ("advanced", "error", "detail"),
+    [
+        ({"disk_space_mb": -5}, "error.advanced_number", "minimumFreeDiskSpaceInMB"),
+        ({"disk_space_mb": 0}, "error.advanced_number", "minimumFreeDiskSpaceInMB"),
+        ({"memory_mb": "many"}, "error.advanced_number", "minimumMemoryInMB"),
+        ({"memory_mb": "-1"}, "error.advanced_number", "minimumMemoryInMB"),
+        ({"processors": 1.5}, "error.advanced_number", "minimumNumberOfProcessors"),
+        ({"processors": True}, "error.advanced_number", "minimumNumberOfProcessors"),
+        ({"cpu_speed_mhz": [1800]}, "error.advanced_number", "minimumCpuSpeedInMHz"),
+        ({"cpu_speed_mhz": 2**31}, "error.advanced_number", "minimumCpuSpeedInMHz"),
+        ({"memory_mb": "9" * 5000}, "error.advanced_number", "minimumMemoryInMB"),
+        ({"max_run_time": 0}, "error.advanced_number", "maxRunTimeInMinutes"),
+        ({"max_run_time": 1441}, "error.advanced_number", "maxRunTimeInMinutes"),
+        ({"restart_behavior": "never"}, "error.bad_restart_behavior", ""),
+        ({"restart_behavior": ["force"]}, "error.bad_restart_behavior", ""),
+        ({"windows_release": "Windows12"}, "error.bad_windows_release", ""),
+        ({"windows_release": 1607}, "error.bad_windows_release", ""),
+        ({"allow_uninstall": "yes"}, "error.bad_advanced", ""),
+        ("everything", "error.bad_advanced", ""),
+    ],
+)
+def test_invalid_advanced_settings_are_refused_on_the_server(advanced, error, detail):
+    existing = tuned_app()
+    update = {**appmodel.propose_form(exe_analysis(), existing), "advanced": advanced}
+    attempts = (
+        lambda: appmodel.new_app_body(new_exe_form(advanced=advanced), exe_analysis()),
+        lambda: appmodel.clone_app_body(existing, update, exe_analysis()),
+        lambda: appmodel.inplace_patch(existing, update, exe_analysis(), "1"),
+    )
+    for attempt in attempts:
+        with pytest.raises(appmodel.FormError, match=error) as caught:
+            attempt()
+        assert caught.value.detail == detail
+
+
+def test_update_form_is_filled_with_the_settings_read_from_intune():
+    assert appmodel.propose_form(exe_analysis(), tuned_app())["advanced"] == {
+        "disk_space_mb": 500,
+        "memory_mb": 4096,
+        "processors": 2,
+        "cpu_speed_mhz": 1800,
+        "windows_release": "21H1",
+        "restart_behavior": "suppress",
+        "max_run_time": 90,
+        "allow_uninstall": True,
+    }
+    # An app that says nothing: empty fields, and no Windows release is proposed for it.
+    assert appmodel.propose_form(exe_analysis(), updatable_app())["advanced"] == {
+        **ADVANCED_DEFAULTS,
+        "windows_release": "",
+    }
+
+
+def test_update_left_alone_keeps_every_advanced_setting():
+    existing = tuned_app()
+    form = appmodel.propose_form(exe_analysis(), existing)
+    silent = {key: value for key, value in form.items() if key != "advanced"}
+
+    clone = appmodel.clone_app_body(existing, form, exe_analysis())
+    assert clone == appmodel.clone_app_body(existing, silent, exe_analysis())
+    assert clone["minimumFreeDiskSpaceInMB"] == 500 and clone["minimumMemoryInMB"] == 4096
+    assert clone["minimumSupportedWindowsRelease"] == "21H1"
+    assert clone["allowAvailableUninstall"] is True
+    assert clone["installExperience"] == existing["installExperience"]
+
+    # The in-place update sends none of these settings: Intune keeps what it has.
+    patch = appmodel.inplace_patch(existing, form, exe_analysis(), "1")
+    assert patch == appmodel.inplace_patch(existing, silent, exe_analysis(), "1")
+    assert "installExperience" not in patch
+    assert "minimumSupportedWindowsRelease" not in patch
+    for prop in ADVANCED_PROPERTIES:
+        assert prop not in patch, prop
+
+
+def test_update_changes_only_the_advanced_settings_that_were_modified():
+    existing = tuned_app()
+    form = appmodel.propose_form(exe_analysis(), existing)
+    form["advanced"].update(memory_mb="8192", restart_behavior="force", disk_space_mb="")
+
+    patch = appmodel.inplace_patch(existing, form, exe_analysis(), "1")
+    assert patch["minimumMemoryInMB"] == 8192
+    assert patch["minimumFreeDiskSpaceInMB"] is None  # emptied: the requirement is removed
+    assert patch["installExperience"] == {
+        "runAsAccount": "user",
+        "deviceRestartBehavior": "force",
+        "maxRunTimeInMinutes": 90,
+    }
+    for prop in ("minimumNumberOfProcessors", "minimumCpuSpeedInMHz", "allowAvailableUninstall"):
+        assert prop not in patch, prop
+    assert "minimumSupportedWindowsRelease" not in patch
+
+    clone = appmodel.clone_app_body(existing, form, exe_analysis())
+    assert clone["minimumMemoryInMB"] == 8192 and clone["minimumFreeDiskSpaceInMB"] is None
+    assert clone["minimumNumberOfProcessors"] == 2 and clone["minimumCpuSpeedInMHz"] == 1800
+    assert clone["installExperience"]["deviceRestartBehavior"] == "force"
+    assert clone["installExperience"]["runAsAccount"] == "user"
+    assert existing["minimumMemoryInMB"] == 4096  # the app read from Intune is not modified
+    assert existing["installExperience"]["deviceRestartBehavior"] == "suppress"
+
+
+def test_update_can_switch_the_other_advanced_settings():
+    existing = tuned_app()
+    form = appmodel.propose_form(exe_analysis(), existing)
+    form["advanced"].update(
+        windows_release="Windows11_22H2", allow_uninstall=False, max_run_time="30"
+    )
+    patch = appmodel.inplace_patch(existing, form, exe_analysis(), "1")
+    assert patch["minimumSupportedWindowsRelease"] == "Windows11_22H2"
+    assert patch["allowAvailableUninstall"] is False
+    assert patch["installExperience"]["maxRunTimeInMinutes"] == 30
+
+
+def test_emptied_install_time_goes_back_to_the_default_of_intune():
+    existing = tuned_app()
+    form = appmodel.propose_form(exe_analysis(), existing)
+    form["advanced"]["max_run_time"] = ""
+    patch = appmodel.inplace_patch(existing, form, exe_analysis(), "1")
+    assert patch["installExperience"]["maxRunTimeInMinutes"] == 60
+    # Nothing to send when the app is already at the default, or never said anything.
+    for experience in (
+        {"runAsAccount": "system", "maxRunTimeInMinutes": 60},
+        {"runAsAccount": "system", "maxRunTimeInMinutes": 0},
+        None,
+    ):
+        usual = updatable_app(installExperience=experience)
+        form = appmodel.propose_form(exe_analysis(), usual)
+        form["advanced"]["max_run_time"] = ""
+        assert "installExperience" not in appmodel.inplace_patch(usual, form, exe_analysis(), "1")
+
+
+def test_a_windows_release_the_tool_does_not_know_is_kept_but_cannot_be_chosen():
+    existing = {**tuned_app(), "minimumSupportedWindowsRelease": "Windows11_99H9"}
+    form = appmodel.propose_form(exe_analysis(), existing)
+    assert form["advanced"]["windows_release"] == "Windows11_99H9"
+    clone = appmodel.clone_app_body(existing, form, exe_analysis())
+    assert clone["minimumSupportedWindowsRelease"] == "Windows11_99H9"
+    assert "minimumSupportedWindowsRelease" not in appmodel.inplace_patch(
+        existing, form, exe_analysis(), "1"
+    )
+    form["advanced"]["windows_release"] = "Windows11_98H8"
+    with pytest.raises(appmodel.FormError, match="error.bad_windows_release"):
+        appmodel.clone_app_body(existing, form, exe_analysis())

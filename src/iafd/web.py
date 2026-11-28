@@ -145,6 +145,7 @@ def create_app(
             "max_download_mb": settings.max_download_mb,
             "redirect_uri": auth.redirect_uri,
             "config_writable": store.writable(),
+            "windows_releases": list(appmodel.WINDOWS_RELEASES),
         }
 
     @app.get("/auth/login")
@@ -236,6 +237,7 @@ def create_app(
             install_command=app_data.get("installCommandLine", ""),
             uninstall_command=app_data.get("uninstallCommandLine", ""),
             run_as=appmodel.run_as_of(app_data),
+            advanced=appmodel.advanced_model(app_data),
             detection=appmodel.detection_model(appmodel.app_rules(app_data)),
         )
         newer = [

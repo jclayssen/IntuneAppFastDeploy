@@ -471,3 +471,154 @@ def test_badly_formed_group_is_refused_before_the_app_is_created(intune, graph, 
     with pytest.raises(StoreError, match="error.bad_group_id"):
         publish.publish_new(graph, store, package, analysis, form, step, progress)
     assert intune.calls == []
+
+
+# --------------------------------------------------------------------------- advanced settings
+
+
+def tuned(intune):
+    """An app on which someone set every advanced setting, in the portal or with the tool."""
+    return existing_app(
+        intune,
+        minimumFreeDiskSpaceInMB=500,
+        minimumMemoryInMB=4096,
+        minimumNumberOfProcessors=2,
+        minimumCpuSpeedInMHz=1800,
+        minimumSupportedWindowsRelease="21H1",
+        allowAvailableUninstall=True,
+        installExperience=user_context(),
+    )
+
+
+TUNED = {
+    "minimumFreeDiskSpaceInMB": 500,
+    "minimumMemoryInMB": 4096,
+    "minimumNumberOfProcessors": 2,
+    "minimumCpuSpeedInMHz": 1800,
+    "minimumSupportedWindowsRelease": "21H1",
+    "allowAvailableUninstall": True,
+    "installExperience": user_context(),
+}
+
+
+def settings_of(app):
+    return {key: app.get(key) for key in TUNED}
+
+
+def test_new_app_without_advanced_settings_is_created_as_before(intune, graph, store, package):
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, None)
+    seen, step, progress = steps()
+    outcome = publish.publish_new(graph, store, package, analysis, form, step, progress)
+    assert settings_of(intune.apps[outcome["app_id"]]) == {
+        "minimumFreeDiskSpaceInMB": None,
+        "minimumMemoryInMB": None,
+        "minimumNumberOfProcessors": None,
+        "minimumCpuSpeedInMHz": None,
+        "minimumSupportedWindowsRelease": "1607",
+        "allowAvailableUninstall": None,
+        "installExperience": {
+            "runAsAccount": "system",
+            "deviceRestartBehavior": "basedOnReturnCode",
+        },
+    }
+
+
+def test_new_app_is_created_with_its_advanced_settings(intune, graph, store, package):
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, None)
+    form["advanced"].update(
+        disk_space_mb="500",
+        memory_mb="4096",
+        processors="2",
+        cpu_speed_mhz="1800",
+        windows_release="21H1",
+        restart_behavior="suppress",
+        max_run_time="90",
+        allow_uninstall=True,
+    )
+    form["run_as"] = "user"
+    seen, step, progress = steps()
+    outcome = publish.publish_new(graph, store, package, analysis, form, step, progress)
+    assert settings_of(intune.apps[outcome["app_id"]]) == TUNED
+
+
+def test_supersede_carries_the_advanced_settings_to_the_new_version(intune, graph, store, package):
+    current = tuned(intune)
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, current)
+    form.update(mode="supersede", rollout="none")
+    seen, step, progress = steps()
+    outcome = publish.publish_supersede(
+        graph, store, package, analysis, form, current, step, progress
+    )
+    assert settings_of(intune.apps[outcome["app_id"]]) == TUNED
+
+
+def test_supersede_applies_the_modified_advanced_settings_to_the_new_version_only(
+    intune, graph, store, package
+):
+    current = tuned(intune)
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, current)
+    form.update(mode="supersede", rollout="none")
+    form["advanced"].update(memory_mb="8192", processors="", restart_behavior="force")
+    seen, step, progress = steps()
+    outcome = publish.publish_supersede(
+        graph, store, package, analysis, form, current, step, progress
+    )
+    assert settings_of(intune.apps[outcome["app_id"]]) == {
+        **TUNED,
+        "minimumMemoryInMB": 8192,
+        "minimumNumberOfProcessors": None,
+        "installExperience": {**user_context(), "deviceRestartBehavior": "force"},
+    }
+    assert settings_of(intune.apps[current["id"]]) == TUNED
+
+
+def test_inplace_update_sends_no_advanced_setting_when_none_was_modified(intune, graph, package):
+    current = tuned(intune)
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, current)
+    seen, step, progress = steps()
+    publish.publish_inplace(graph, package, analysis, form, current, step, progress)
+    assert intune.patches and all(not set(TUNED) & set(patch) for patch in intune.patches)
+    assert settings_of(intune.apps[current["id"]]) == TUNED
+
+
+def test_inplace_update_applies_the_modified_advanced_settings(intune, graph, package):
+    current = tuned(intune)
+    analysis = msi_analysis()
+    form = appmodel.propose_form(analysis, current)
+    form["advanced"].update(disk_space_mb="2000", allow_uninstall=False, max_run_time="45")
+    seen, step, progress = steps()
+    publish.publish_inplace(graph, package, analysis, form, current, step, progress)
+    assert settings_of(intune.apps[current["id"]]) == {
+        **TUNED,
+        "minimumFreeDiskSpaceInMB": 2000,
+        "allowAvailableUninstall": False,
+        "installExperience": {**user_context(), "maxRunTimeInMinutes": 45},
+    }
+    sent = set().union(*intune.patches) & set(TUNED)
+    assert sent == {"minimumFreeDiskSpaceInMB", "allowAvailableUninstall", "installExperience"}
+
+
+@pytest.mark.parametrize("mode", ["new", "supersede", "inplace"])
+def test_invalid_advanced_setting_is_refused_before_anything_is_sent(
+    intune, graph, store, package, mode
+):
+    analysis = msi_analysis()
+    current = None if mode == "new" else tuned(intune)
+    form = appmodel.propose_form(analysis, current)
+    form["advanced"]["memory_mb"] = "-4"
+    seen, step, progress = steps()
+    with pytest.raises(appmodel.FormError, match="error.advanced_number"):
+        if mode == "new":
+            publish.publish_new(graph, store, package, analysis, form, step, progress)
+        elif mode == "supersede":
+            publish.publish_supersede(
+                graph, store, package, analysis, form, current, step, progress
+            )
+        else:
+            publish.publish_inplace(graph, package, analysis, form, current, step, progress)
+    assert intune.calls == []

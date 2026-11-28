@@ -73,6 +73,10 @@ Ces écrans viennent de la démonstration intégrée, qui tourne face à un Intu
 
 <img src="docs/screenshots/fr/08-new-application.png" alt="Écran de vérification pour une nouvelle application à partir d'un installeur EXE" width="780">
 
+**Paramètres avancés**, fermés par défaut en bas de l'écran de vérification : prérequis du poste, redémarrage, durée d'installation.
+
+<img src="docs/screenshots/fr/13-advanced-settings.png" alt="Section Paramètres avancés ouverte : espace disque, mémoire, processeurs, vitesse du processeur, version minimale de Windows, comportement de redémarrage, durée maximale d'installation, désinstallation depuis le Portail d'entreprise" width="780">
+
 **Désinstaller un logiciel** : le formulaire de la règle, avec le nombre d'installations concernées et une confirmation par saisie.
 
 <img src="docs/screenshots/fr/11-removal.png" alt="Formulaire de désinstallation d'un logiciel des postes : noms, versions, type, commande, cibles et confirmation" width="780">
@@ -194,6 +198,7 @@ docker compose down
    - **Application** : nom, version, commandes. Le nom du fichier dans la commande d'installation est remplacé automatiquement.
    - **Règle de détection** : comment Intune sait que la nouvelle version est installée. Un code produit MSI ou une règle « version supérieure ou égale à » passe automatiquement à la nouvelle version. Lisez les notes en jaune quand il y en a.
    - **Comment mettre à jour** : la méthode, qui reçoit la nouvelle version en premier, les notifications que voient les personnes, et **Installer en tant que** (Système ou Utilisateur), repris de l'application actuelle.
+   - **Paramètres avancés** : fermés par défaut, préremplis avec les réglages de l'application actuelle. Voir [Paramètres avancés](#paramètres-avancés).
 4. Cliquez sur **Publier dans Intune**. L'avancement s'affiche étape par étape.
 
 Le lien doit renvoyer l'installeur lui-même. Une page où il faut encore cliquer sur un bouton est refusée avec le message *« Le lien ne renvoie pas un fichier MSI ou EXE »* : copiez plutôt le lien du bouton de téléchargement final.
@@ -207,6 +212,7 @@ Cliquez sur **Nouvelle application**, donnez le lien, puis renseignez :
 - **Règle de détection** : pour un EXE, la règle fiable la plus simple est *Fichier*, avec le dossier et le nom du programme principal, et *Version supérieure ou égale à*.
 - **Architecture** et **Installer en tant que** : *Système* (le choix habituel : l'installeur s'exécute avec les droits du poste) ou *Utilisateur* (il s'exécute dans la session de la personne connectée, pour les logiciels qui s'installent par utilisateur). Un MSI « par utilisateur » est proposé en *Utilisateur*, tout le reste en *Système*.
 - **Groupes pilote et production**, les notifications que voient les personnes, et qui reçoit l'application maintenant.
+- **Paramètres avancés**, si vous en avez besoin : prérequis du poste, redémarrage, durée d'installation. Voir [Paramètres avancés](#paramètres-avancés).
 
 ### Les deux méthodes de mise à jour
 
@@ -226,6 +232,30 @@ La suppression de la version la plus ancienne est annoncée sur l'écran de vér
 - Laissé tel quel, rien ne change : la nouvelle application est une copie de l'actuelle, et une mise à jour sur place n'envoie pas du tout ce réglage.
 - Modifié avec *Nouvelle application qui remplace l'actuelle* : la nouvelle application est créée avec la nouvelle valeur ; la version précédente garde la sienne.
 - Modifié avec *Modifier l'application existante* : l'outil demande à Intune de le changer sur l'application elle-même. Cette demande n'a pas été essayée sur un vrai tenant, et le portail Intune ne permet pas toujours ce changement sur une application existante : si Intune refuse, l'erreur est affichée et vous pouvez publier à nouveau avec la première méthode.
+
+### Paramètres avancés
+
+En bas de l'écran de vérification, **Afficher les paramètres avancés** ouvre une section dont la plupart des gens n'ont jamais besoin. Elle est présente à l'ajout d'une application et pour les deux méthodes de mise à jour.
+
+| Réglage | Dans Intune (Microsoft Graph) | Sans y toucher, sur une nouvelle application |
+|---|---|---|
+| Espace disque libre nécessaire (Mo) | `minimumFreeDiskSpaceInMB` | Aucune exigence |
+| Mémoire physique nécessaire (Mo) | `minimumMemoryInMB` | Aucune exigence |
+| Nombre minimal de processeurs logiques | `minimumNumberOfProcessors` | Aucune exigence |
+| Vitesse minimale du processeur (MHz) | `minimumCpuSpeedInMHz` | Aucune exigence |
+| Version minimale de Windows | `minimumSupportedWindowsRelease` | Windows 10 1607 |
+| Redémarrage du poste après l'installation | `installExperience.deviceRestartBehavior` | Redémarrer quand le code de retour le demande |
+| Durée maximale d'installation (minutes) | `installExperience.maxRunTimeInMinutes` | 60 minutes, la valeur par défaut d'Intune |
+| Autoriser la désinstallation depuis le Portail d'entreprise | `allowAvailableUninstall` | Non |
+
+- **Nouvelle application** : un champ vide garde la valeur par défaut ci-dessus. Qui n'ouvre pas la section obtient exactement l'application que l'outil créait avant que cette section existe.
+- **Mise à jour** : la section est préremplie avec ce que l'application actuelle a dans Intune, que ce soit réglé avec cet outil ou dans le portail. Ce que vous ne modifiez pas est conservé : la copie faite par *Nouvelle application qui remplace l'actuelle* porte les mêmes valeurs, et *Modifier l'application existante* n'envoie pas du tout ces réglages. Seul ce que vous changez est envoyé.
+- Vider un prérequis le supprime. Vider la durée d'installation revient à 60 minutes.
+- Les versions de Windows proposées vont de Windows 10 1607 à Windows 11 23H2. Une version plus récente réglée dans le portail Intune est conservée telle quelle, et ne peut être choisie que là-bas.
+- Les valeurs sont vérifiées côté serveur : nombres entiers supérieurs à zéro, durée d'installation de 1440 minutes au plus, choix connus uniquement.
+- La page de l'application liste ces réglages sous **Paramètres avancés**.
+
+Laissés au portail Intune, parce que chacun demande un écran à lui seul : les règles de prérequis par script, fichier ou registre (celles qui existent sont recopiées à chaque mise à jour), les dépendances (conservées par une mise à jour), les codes de retour, l'architecture d'une application existante, le délai de grâce avant redémarrage, l'échéance d'installation et la priorité d'optimisation de la distribution d'une affectation, le logo, la catégorie et les autres champs d'information de l'application.
 
 ## Groupes pilote et production
 
@@ -525,6 +555,7 @@ docker compose logs -f app
 - Un seul fichier d'installation par application (l'outil y ajoute ses propres scripts quand vous choisissez de désinstaller d'abord une ancienne version). Un installeur qui a besoin de plusieurs fichiers à côté de lui doit d'abord être regroupé en un seul EXE ou MSI.
 - La commande de désinstallation et la règle de détection d'un EXE ne se devinent pas à partir du fichier : vous les saisissez une fois, puis elles sont reprises à chaque mise à jour.
 - Les règles de détection par script sont recopiées telles quelles.
+- Les règles de prérequis (script, fichier, registre), les dépendances et les codes de retour ne sont pas modifiés par l'outil : une mise à jour recopie ceux qui existent. Voir [Paramètres avancés](#paramètres-avancés) pour ce qui peut être réglé.
 - La version la plus ancienne est supprimée d'Intune quand une troisième est publiée (sauf si vous décochez la case).
 
 ## Développement
@@ -583,7 +614,7 @@ node docs/screenshots/make.js fr
 
 ### Référence Microsoft Graph
 
-L'outil utilise le point d'accès bêta de Microsoft Graph. Pages par rapport auxquelles le code a été vérifié : [deviceHealthScript](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-devicehealthscript?view=graph-rest-beta), [initiateOnDemandProactiveRemediation](https://learn.microsoft.com/en-us/graph/api/intune-devices-manageddevice-initiateondemandproactiveremediation?view=graph-rest-beta), [win32LobAppPowerShellScriptRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapppowershellscriptrule?view=graph-rest-beta), [mobileAppInstallStatus](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappinstallstatus?view=graph-rest-beta), [detectedApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-detectedapp?view=graph-rest-beta), [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta), [win32LobAppInstallExperience](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappinstallexperience?view=graph-rest-beta), [runAsAccountType](https://learn.microsoft.com/en-us/graph/api/resources/intune-shared-runasaccounttype?view=graph-rest-beta), [win32LobAppNotification](https://learn.microsoft.com/en-us/graph/api/resources/intune-shared-win32lobappnotification?view=graph-rest-beta), [update win32LobApp](https://learn.microsoft.com/en-us/graph/api/intune-apps-win32lobapp-update?view=graph-rest-beta).
+L'outil utilise le point d'accès bêta de Microsoft Graph. Pages par rapport auxquelles le code a été vérifié : [deviceHealthScript](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-devicehealthscript?view=graph-rest-beta), [initiateOnDemandProactiveRemediation](https://learn.microsoft.com/en-us/graph/api/intune-devices-manageddevice-initiateondemandproactiveremediation?view=graph-rest-beta), [win32LobAppPowerShellScriptRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapppowershellscriptrule?view=graph-rest-beta), [mobileAppInstallStatus](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappinstallstatus?view=graph-rest-beta), [detectedApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-devices-detectedapp?view=graph-rest-beta), [win32LobApp](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapp?view=graph-rest-beta), [win32LobAppFileSystemRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappfilesystemrule?view=graph-rest-beta), [win32LobAppRegistryRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappregistryrule?view=graph-rest-beta), [win32LobAppProductCodeRule](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappproductcoderule?view=graph-rest-beta), [mobileAppContentFile](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappcontentfile?view=graph-rest-beta), [commit](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-commit?view=graph-rest-beta), [renewUpload](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileappcontentfile-renewupload?view=graph-rest-beta), [assign](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-assign?view=graph-rest-beta), [win32LobAppAssignmentSettings](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappassignmentsettings?view=graph-rest-beta), [mobileAppSupersedence](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-mobileappsupersedence?view=graph-rest-beta), [updateRelationships](https://learn.microsoft.com/en-us/graph/api/intune-apps-mobileapp-updaterelationships?view=graph-rest-beta), [win32LobAppInstallExperience](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobappinstallexperience?view=graph-rest-beta), [runAsAccountType](https://learn.microsoft.com/en-us/graph/api/resources/intune-shared-runasaccounttype?view=graph-rest-beta), [win32LobAppNotification](https://learn.microsoft.com/en-us/graph/api/resources/intune-shared-win32lobappnotification?view=graph-rest-beta), [update win32LobApp](https://learn.microsoft.com/en-us/graph/api/intune-apps-win32lobapp-update?view=graph-rest-beta), [win32LobAppRestartBehavior](https://learn.microsoft.com/en-us/graph/api/resources/intune-apps-win32lobapprestartbehavior?view=graph-rest-beta).
 
 ## Ajouter une langue
 
